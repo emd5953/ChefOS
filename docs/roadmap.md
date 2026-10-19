@@ -1,55 +1,64 @@
-# Reconstruction Plan
+# Roadmap
 
-**Goal:** Reconstruct the ChefOS product around its advertised restaurant workflows, while keeping public claims, observed product behavior, and our implementation choices distinct. The current local product prototype is a first pass, not a completed app.
+**Last updated:** 2026-10-19
+**Related:** [PRD](prd.md), [ADR 0001: Integration-first](adr/0001-integration-first.md)
+
+The sequence is integration-first. Module features are built on real imported data, not seeded records. Each phase has an exit criterion. Phases overlap where noted.
 
 ## Current state
 
-- Public marketing pages were captured and reconstructed in the repository.
-- A local full-stack prototype was added with SQLite persistence and general restaurant records.
-- The prototype is not a faithful workflow reconstruction: it omits or simplifies advertised capabilities such as storage-area count sessions, unit/pack conversion, invoice/AP flow, transfers, demand-informed schedule planning, availability/time-off, Commerce PMix and variance detail, mobile-specific workflows, and connected integrations.
-- Sous currently uses deterministic local responses; it does not establish or reproduce ChefOS's advertised assistant.
-- Public site mockups are illustrative, and no authenticated ChefOS workspace or native app has been inspected.
+- Static reproduction of the ChefOS public site (design reference).
+- Prototype workspace (`server.py` + `product.js`): SQLite, auth, and basic screens for inventory, purchase orders, recipes, waste, employees, shifts, time clock, tasks, sales summaries, and a daily-sales ingest key. A sandbox, not the production codebase.
+- Production services: not started.
 
-## Work sequence
+## Phase 0: Platform foundation
 
-### 1. Complete the evidence map
+FastAPI service skeleton, PostgreSQL with migrations and RLS, identity module (orgs, locations, users, roles, sessions), Temporal cluster and worker skeleton, Terraform for dev and staging, CI, OpenTelemetry wiring.
 
-Capture the remaining public product pages and states: FAQ, pricing interactions, legal/security/status surfaces, and any linked product guides. Inspect the App Store listing and native app metadata where available. Preserve the existing REA evidence IDs and record new captures with date, route, method, and limits.
+**Exit:** a user can sign up, create an org and location, and sign in on staging. A no-op Temporal workflow runs scoped to that org.
 
-**Done when:** the public route and mobile-app surface inventory is complete and each capability points to a source.
+## Phase 1: Square integration (P0)
 
-### 2. Get product behavior evidence
+[Integration layer spec](specs/integration-layer.md), milestones M1–M5:
 
-Use authorized demo or customer access if available. Map onboarding, organization/location setup, navigation, roles, and the highest-value end-to-end workflows across Team, Commerce, and Inventory. Capture states before and after actions, including errors and corrections. Never fill unknowns with plausible CRUD behavior and call it parity.
+1. Connect Square, link locations.
+2. Catalog and orders pipeline, mapping queue.
+3. `daily_sales` read model, freshness, reconciliation against Square.
+4. Webhooks and 13-month backfill.
+5. Team members and timecards → `daily_labor`.
 
-**Done when:** each core workflow has reproducible observations, actors, state transitions, and evidence references—or is explicitly blocked as unknown.
+**Exit:** a sandbox seller connects. Daily net sales and labor match Square exactly for test days and update within 5 minutes.
 
-### 3. Rebuild around restaurant workflows
+## Phase 2: Commerce on real data (P0)
 
-Prioritize complete cross-module work, not module-shaped screens:
+Web app shell. Commerce daily and date-range views, channel breakdown, period comparisons, labor %, freshness indicators throughout. COM-1 to COM-3.
 
-1. **Team:** demand context → coverage plan → publish/adjust → employee availability, trades and approvals → shift tasks and attendance.
-2. **Inventory:** storage-area count → unit conversion and exceptions → order → receive and reconcile invoice → stock movement/transfer → recipe and 86 availability → waste/yield and variance.
-3. **Commerce:** date range and daily detail → sales/channel/PMix/margin/labor views → variance and action context.
-4. **Sous and integrations:** ground assistant behavior in real operational data; document connector setup and sync states only as they are evidenced. For a production-style Sous implementation, follow the staged proposal in [Sous production architecture](sous-architecture.md): begin with scoped read-only tools and evidence-bearing responses, add evaluation and observability before rollout, then consider one draft-and-approve write workflow.
-5. **Mobile:** implement the employee, manager, and inventory jobs described on the public mobile page as first-class flows.
+**Exit:** an owner can answer "how did last week compare to the week before, by location and channel, and what was labor %?" without leaving the app. Every number shows its as-of time.
 
-This ordering is a reconstruction priority, not a claim about ChefOS's internal navigation or release order.
+## Phase 3: Team (P0), can start during Phase 2
 
-### 4. Validate workflow parity
+Employees linked to POS team members, schedule builder with projected labor cost against forecast sales, publish, availability and time off with approvals, mobile employee app. TEAM-1 to TEAM-4, MOB-1.
 
-Compare each implemented journey with captured source behavior. Check data meaning, state transitions, permissions, responsive/device context, loading/empty/error states, and correction paths. Track each requirement as observed, vendor claim, inferred, implemented locally, or unknown.
+**Exit:** a GM builds and publishes a week's schedule against forecast. Employees see it on mobile, and time-off requests flow through approval.
 
-**Done when:** acceptance criteria derive from evidence and no unverified local design is described as ChefOS behavior.
+## Phase 4: Inventory core (P0/P1)
 
-## Immediate next work
+Items, packs and unit conversions, pars, storage-area count sessions with exceptions, purchase orders and receiving, recipes linked to POS menu items. INV-1 to INV-4.
 
-1. Keep docs accurate (this pass) and label the current app as a prototype.
-2. Inspect the remaining public pages and native app listing.
-3. Obtain authorized workspace access or an artifact with authenticated behavior; without that, the next app changes can only implement the public claims as a clearly labeled interpretation.
-4. Replace the generic workflows with end-to-end Team, Inventory, and Commerce flows after gathering evidence or making explicit product decisions.
-5. For Sous, define canonical metrics and source freshness, validate role/location boundaries, and evaluate evidence and failure handling before making any parity claim. The architecture proposal is a design input; authenticated product evidence is still required to establish ChefOS behavior.
+**Exit:** a kitchen manager runs a full count on a phone and places and receives an order. Plate cost is visible for mapped menu items.
 
-## Evidence ledger convention
+## Phase 5: Sous read-only (P1)
 
-For each finding record: capability, source/route, timestamp, evidence ID, evidence type (**observed**, **vendor claim**, **inferred**, **unknown**), confidence, and unresolved questions. Keep direct observations separate from our implementation decisions.
+Canonical metric definitions, typed read tools over commerce/team/inventory services, evidence and freshness in every answer, evaluation set in CI. [Sous spec](specs/sous.md) steps 1–4.
+
+**Exit:** internal pilot meets evaluation thresholds for metric correctness, evidence coverage, and authorization.
+
+## Phase 6: Breadth (P1/P2)
+
+Push API (M6), second POS connector, payroll export, shift trades and open shifts, time clock, product mix, daily flash, waste and yield, Sous draft-and-approve shift changes, supplier/invoice connectors, food cost variance.
+
+Order within Phase 6 is set by pilot customer demand.
+
+## Competitive research (ongoing, not blocking)
+
+Continue mapping the reference product: remaining public pages, the iOS App Store listing, and authenticated workflows if legitimate demo access becomes available. Findings go in [research/](research/chefos-public-site.md) and inform requirements. They are not a parity target.

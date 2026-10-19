@@ -1,105 +1,149 @@
-# Product Reconstruction Specification
+# Product Requirements
 
-**Purpose:** Describe the ChefOS product we are reconstructing from public evidence. This is a target behavior brief, not a spec for the current prototype and not a verified description of authenticated ChefOS.
+**Status:** Draft · **Last updated:** 2026-10-19
+**Related:** [Architecture](architecture.md), [Roadmap](roadmap.md), [Competitive research: ChefOS](research/chefos-public-site.md)
 
-**Evidence boundary:** Public marketing pages and their illustrative mockups were captured with REA on 2026-10-18. No account, live workflow, API, or native app behavior has been observed. See the [evidence record](evidence/2026-10-18-public-site.md).
+## Problem
 
-## Product outcome
+Independent and small multi-location restaurants run on a POS plus a patchwork of scheduling apps, payroll, supplier portals, spreadsheets, and group texts. Managers can't easily answer basic operating questions: Are we overstaffed tonight? What did we actually spend on food last week? Which items are about to run out? The data exists in other systems, but nothing connects it to the daily work of scheduling, ordering, and running service.
 
-Help restaurant teams plan and run service with connected views of people, sales, and stock. Team, Commerce, and Inventory are the primary product modules. Work in one area should make relevant information available in the others: sales and demand context can inform labor and prep; recipes connect menu items to ingredients and cost; receiving, counts, transfers, and waste affect inventory and performance reporting.
+## Product
 
-The exact shared data model is unknown. The relationships above are product-level expectations inferred from the public feature descriptions and must be verified against product access before being treated as exact behavior.
+A restaurant operations platform that sits alongside the existing POS. It brings sales, labor, and inventory data into one place and builds daily workflows on top of it. It has three modules, sold individually or together:
 
-## Actors and operating context
+- **Team:** scheduling, time and attendance, shift changes, tasks.
+- **Commerce:** sales and performance reporting.
+- **Inventory:** counts, purchasing, receiving, recipes, waste.
 
-The public site implies employees, managers, restaurant operators, and multi-location groups. It describes work organized around locations and references positions, stations, shifts, storage areas, business dates, suppliers, and sales channels. Exact roles, permissions, and organization setup are unknown.
+Two shared capabilities run across all three:
 
-## Target workflows
+- **Integrations:** POS, labor, and supplier data brought in automatically.
+- **Sous:** an assistant that answers operating questions from that data.
 
-### 1. Plan and manage a team
+The reference product in this category is ChefOS by Counter Labs. See [competitive research](research/chefos-public-site.md).
 
-**Advertised:** schedule building with demand context; staffing by employee, position, station, and location; open shifts; shift trades and manager approval; availability and time off; tasks; attendance and compliance.
+## Users
 
-**Expected reconstruction behavior:** managers can create and adjust coverage, employees can view schedules and request changes, managers can review requests, and the team can work from assigned shift tasks. Mobile copy also describes schedule-change alerts, manager attention to late clock-ins, and approval queues.
+| Persona | Context | Primary jobs |
+| --- | --- | --- |
+| **Owner / operator** | 1–10 locations, often not on site | Understand performance, control labor and food cost, compare locations |
+| **General manager** | On site, runs the building | Build schedules, approve changes, order stock, review daily numbers |
+| **Kitchen manager / chef** | Back of house | Counts, ordering, recipes and costing, waste, prep |
+| **Employee** | Hourly, mobile-only | See schedule, clock in/out, request trades and time off, complete tasks |
 
-**Do not guess:** forecast formula, labor-law rule set, schedule publishing behavior, trade state machine, notification channels, clock-in source, payroll export mapping, or audit semantics.
+## Goals
 
-### 2. Understand restaurant performance
+- Accurate daily sales and labor numbers without manual entry, within minutes of the POS.
+- Cut weekly scheduling time for a GM by half.
+- Make food cost visible weekly, not monthly.
+- Employees do all self-service from their phone.
 
-**Advertised:** sales, labor, margin, product mix, channel, daily flash, and variance reports. The Commerce page capture exposes a date-range timeline with individual daily date buttons and weather context.
+## Non-goals
 
-**Expected reconstruction behavior:** users can inspect performance by date range and day, and see the advertised sales and cost dimensions in restaurant context.
+- Replacing the POS or processing payments.
+- Payroll processing. We export to payroll providers.
+- Accounting or general ledger.
+- Enterprise chains (50+ locations) in the first release.
+- Register and handheld hardware.
 
-**Do not guess:** formulas, comparison baselines, metric rounding, business-day cutoff, data freshness, POS reconciliation, weather source, or variance alerts. Public sample data is illustrative.
+## Requirements
 
-### 3. Control inventory and purchasing
+Priority: **P0** is required for first production release, **P1** follows soon after, **P2** comes later.
 
-**Advertised:** stock counts by storage area and unit, count exceptions, pars, orders and receiving, pack conversion, invoices/AP, transfers, recipes, waste, stock alerts, forecast-derived prep sheets, 86 broadcasting, and theoretical-versus-actual variance.
+### Integrations
 
-**Expected reconstruction behavior:** stock quantities can be counted and reviewed; purchasing can replenish stock; receiving and transfers represent stock movement; ingredients connect to recipes; waste and yield events can inform cost and availability.
+| ID | Requirement | Priority |
+| --- | --- | --- |
+| INT-1 | Connect a Square account via OAuth and link Square locations to platform locations | P0 |
+| INT-2 | Import catalog, orders (with refunds/returns), team members, and timecards; keep them current within 5 minutes | P0 |
+| INT-3 | Backfill 13 months of history on connect | P0 |
+| INT-4 | Show per-connection sync health and data freshness; never present stale data as current | P0 |
+| INT-5 | Mapping queue for unlinked locations, items, and team members | P0 |
+| INT-6 | Push API for sales from systems without a connector | P1 |
+| INT-7 | Second POS connector (Toast or Clover) | P1 |
+| INT-8 | Payroll export, supplier/invoice, and accounting connectors | P2 |
 
-**Do not guess:** count-session lifecycle, blind counts, approval thresholds, unit-conversion rules, invoice OCR fields or corrections, supplier catalog semantics, transfer reconciliation, inventory valuation, theoretical usage, or variance calculation.
+Design: [Integration layer spec](specs/integration-layer.md).
 
-### 4. Record waste and yield
+### Commerce
 
-**Advertised:** track yield and shrink by station, shift, and SKU; surface root-cause signals.
+| ID | Requirement | Priority |
+| --- | --- | --- |
+| COM-1 | Daily and date-range sales by location and channel, with defined metrics (net sales, orders, average check) | P0 |
+| COM-2 | Period comparisons (week over week, year over year) | P0 |
+| COM-3 | Labor % (actual labor cost / net sales) by day and location | P0 |
+| COM-4 | Product mix by item and category | P1 |
+| COM-5 | Daily flash report delivered by email/push | P1 |
+| COM-6 | Theoretical vs actual food cost variance | P2 |
+| COM-7 | Weather and event context on the timeline | P2 |
 
-**Expected reconstruction behavior:** waste/yield observations need enough context to support the advertised breakdowns and analysis.
+### Team
 
-**Do not guess:** reason taxonomy, capture device, quantity basis, recipe yield model, shrink formula, or correction/audit flow.
+| ID | Requirement | Priority |
+| --- | --- | --- |
+| TEAM-1 | Employees, positions, stations, and locations; linked to POS team members | P0 |
+| TEAM-2 | Weekly schedule builder with projected labor cost against forecast sales | P0 |
+| TEAM-3 | Publish schedules; employees see them on mobile and get change alerts | P0 |
+| TEAM-4 | Availability and time-off requests with manager approval | P0 |
+| TEAM-5 | Shift trades and open shifts with manager approval | P1 |
+| TEAM-6 | Time clock (or POS timecards) with late/missed clock-in alerts | P1 |
+| TEAM-7 | Shift tasks and checklists | P1 |
+| TEAM-8 | Labor-law compliance rules (breaks, overtime, predictive scheduling) per jurisdiction | P2 |
 
-### 5. Use Sous with operational data
+### Inventory
 
-**Advertised:** natural-language questions, generated reports and briefings, anomaly detection, suggested actions, and schedule generation.
+| ID | Requirement | Priority |
+| --- | --- | --- |
+| INV-1 | Items with purchase packs and unit conversions; pars per location | P0 |
+| INV-2 | Count sessions by storage area, with exceptions for large swings | P0 |
+| INV-3 | Purchase orders to suppliers; receiving against the PO | P1 |
+| INV-4 | Recipes linked to items and to POS menu items; plate cost | P1 |
+| INV-5 | Waste and yield logging by station, shift, and item | P1 |
+| INV-6 | Transfers between locations | P2 |
+| INV-7 | Invoice capture and AP reconciliation | P2 |
+| INV-8 | 86 list broadcast to staff | P2 |
 
-**Expected reconstruction behavior:** Sous is a cross-module assistant grounded in restaurant operations and can produce useful operational outputs. A production design proposal is detailed in [Sous production architecture](sous-architecture.md). In brief, it should authenticate and derive user/org/location scope server-side; classify and validate requests; call only allowlisted, typed, permission-checked domain tools; return answers with source evidence, units, time range, and freshness; and surface missing or stale data rather than guessing. Calculations should use canonical domain/reporting logic where possible.
+### Sous
 
-For writes such as schedule generation, the assistant should produce a draft and impact summary. An authorized manager reviews and explicitly approves it; the command path then rechecks permissions/current state, validates, commits idempotently, and records an audit event. Answering a question must not itself mutate operational data.
+| ID | Requirement | Priority |
+| --- | --- | --- |
+| SOUS-1 | Answer operating questions with evidence, time window, and freshness | P1 |
+| SOUS-2 | Daily briefing per location | P1 |
+| SOUS-3 | Draft-and-approve shift changes | P2 |
+| SOUS-4 | Anomaly detection (sales, labor, waste) | P2 |
 
-**Do not guess:** actual model/provider, retrieval design, internal APIs, source citations, permission checks, action tools, confirmation rules, retention, or whether public examples reflect released functionality. The proposed controls above are recommended reconstruction/product requirements, not observed ChefOS behavior. A deterministic keyword response is not evidence of Sous parity.
+Design: [Sous spec](specs/sous.md), [ADR 0003](adr/0003-sous-read-only-first.md).
 
-**Proposed acceptance criteria for a production-style implementation:** every tool call is tenant/location scoped and authorized; model output cannot choose identity or access scope; answers expose evidence and freshness; unsupported/ambiguous requests clarify or refuse; tool failures and partial data are disclosed; read-only questions cannot mutate records; writes require an approved draft and audited idempotent command. These criteria do not assert that the current prototype meets them.
+### Mobile
 
-### 6. Connect existing systems
+| ID | Requirement | Priority |
+| --- | --- | --- |
+| MOB-1 | Employee: schedule, availability, time off, trades, clock in/out, tasks | P0 |
+| MOB-2 | Manager: approvals, today's staffing, late clock-ins, daily numbers | P1 |
+| MOB-3 | Inventory: counts and receiving on a phone | P1 |
 
-**Advertised:** connectors across POS, payroll/HR, accounting, scheduling/time, suppliers/inventory, delivery, reservations, and communications/identity; REST API and webhooks are also mentioned. A public API example shows a sales-ingest request.
+## Cross-cutting requirements
 
-**Expected reconstruction behavior:** connected systems exchange the operational data needed by the product areas and expose setup/status to users.
+- **Multi-location:** every record belongs to an organization and location. Users see only the locations they're assigned to.
+- **Roles:** owner, admin, manager, employee at minimum. Permissions are enforced server-side.
+- **Source and freshness:** imported data keeps its source and as-of time. Any number derived from imported data shows its freshness.
+- **Audit:** changes to schedules, approvals, inventory, and settings are recorded with actor and time.
+- **Accessibility and states:** every workflow defines its loading, empty, error, and offline (mobile) states.
 
-**Do not guess:** supported connector list, authorization flow, fields, direction, sync cadence, retry behavior, webhook signatures, idempotency, or error resolution. The public example is a documentation sample only; it was not called.
+## Success metrics
 
-### 7. Support work on mobile
+- Connection-to-first-accurate-dashboard time under 15 minutes.
+- Daily net sales matches the POS's own report exactly for 99% of location-days. Remaining differences are explained.
+- Weekly active managers per location at or above 2.
+- Share of shift changes completed through the app instead of text or phone.
 
-**Advertised:** employees access schedules and availability; managers review staffing, tasks, late clock-ins, and approvals; inventory users perform counts, invoice scans, 86 checks, and follow-ups.
+## Pricing (working assumption)
 
-**Expected reconstruction behavior:** mobile supports role-relevant work in the field, not only a desktop screen that happens to resize.
+Per location per month, by module. Starting point from market reference: about $200 for one module, $300 for two, $450 for all three. Multi-location pricing custom.
 
-**Do not guess:** native versus web implementation details, offline support, push behavior, app permissions, or exact screen navigation until the app is inspected.
+## Open questions
 
-## Reconstruction acceptance principles
-
-- Build around the advertised restaurant jobs and their connections, not generic CRUD pages.
-- Keep Team, Commerce, and Inventory as coherent product areas; don’t elevate incidental mockup labels into confirmed features.
-- Use restaurant concepts and workflows only when supported by observed evidence or clearly marked product decisions.
-- Preserve source, date, and correction context for operational data when the observed design supports it.
-- Distinguish implemented reconstruction behavior from vendor claims in both interface copy and project documentation.
-- Treat responsive behavior, accessibility, loading/empty/error states, and role context as part of each workflow.
-
-## Evidence labels
-
-- **Observed:** directly captured or reproduced in an interactive product state.
-- **Vendor claim:** stated on a public ChefOS page; not independently verified.
-- **Inferred:** a relationship or behavior suggested by multiple public claims.
-- **Unknown:** requires authenticated product access, official documentation, or further observation.
-
-## Discovery required before feature parity claims
-
-1. Obtain authorized access to the web workspace and map onboarding, navigation, roles, locations, and representative workflows.
-2. Inspect the linked native app and its version metadata; capture employee, manager, and inventory flows.
-3. Exercise schedule publishing, shift trade, approval, and attendance flows.
-4. Exercise count, order, receiving, invoice, transfer, recipe, waste, and 86 workflows.
-5. Inspect Commerce filters, definitions, daily detail, and reconciliation.
-6. Verify Sous outputs, sources, permissions, and action-confirmation behavior.
-7. Verify which integrations are available and observe at least one permitted setup and sync flow.
-
-Until these are done, the repo is a public-surface reconstruction plus an experimental local prototype, not a feature-complete ChefOS clone.
+- Product name. The repository is named ChefOS after the reference product; we need our own.
+- Target first segment: single-location full-service, or small multi-location quick-service?
+- Labor compliance: which jurisdictions at launch?
+- Do we offer our own time clock, or rely on POS timecards in v1?

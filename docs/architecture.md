@@ -1,75 +1,124 @@
-# Technology and Architecture Notes
+# Architecture
 
-This document separates public evidence about ChefOS, architectural implications of the product it describes, and the implementation in this reconstruction. Public product pages describe intended capabilities; they do not reveal the production system's internal technology choices or prove every advertised capability is live.
+**Status:** Draft · **Last updated:** 2026-10-19
+**Related:** [PRD](prd.md), [ADR 0002: Production stack](adr/0002-production-stack.md), [Integration layer](specs/integration-layer.md), [Sous](specs/sous.md)
 
-## ChefOS product model: public evidence
+## Overview
 
-ChefOS presents itself as a restaurant operating system from Counter Labs. It is designed to sit alongside a restaurant's existing POS, payroll, accounting, supplier, scheduling, delivery, reservation, and communications systems, then bring operational data and workflows into one product. The site describes 48+ connectors, a documented REST API and webhooks, and says it does not replace the POS.
+A multi-tenant SaaS: one modular-monolith API, one PostgreSQL source of truth, and durable workers for integrations and long-running jobs. External systems feed a shared canonical model, and every module and Sous reads from that model.
 
-The product is broader than a set of record-entry screens. Its public pages describe connected workflows across:
+```mermaid
+flowchart LR
+    subgraph External
+      POS[POS: Square]
+      PAY[Payroll / accounting / suppliers - later]
+      PUSH[Third-party push clients]
+    end
 
-- **Commerce:** importing POS transactions and item detail; sales, channel, and location reporting; period comparisons; forecasts; and food-cost, labor, prime-cost, and gross-profit context.
-- **Inventory:** location and storage-area counts; item, pack, and unit conversions; pars; purchasing, receiving, transfers, invoices/AP, recipe costing, waste, and line checks.
-- **Team:** employee and position records; demand-aware schedules; time, availability, time-off, shift trades, open shifts, tasks, alerts, and approvals.
-- **Shared operations and AI:** operational data is described as shared across modules. Sous is presented as answering natural-language questions with numbers, charts, and recommendations, producing briefings, and helping build schedules.
+    subgraph Clients
+      WEB[Web app - Next.js]
+      MOB[Mobile app - React Native]
+    end
 
-These descriptions imply a domain-oriented restaurant product with cross-module workflows and a shared operational model. For example, a vendor invoice or item-cost change can affect inventory and recipe cost; sales history can inform demand context for schedules; waste and yield can inform food-cost analysis. This is an architectural interpretation of the described workflows, not a claim about the internal implementation.
+    subgraph Platform
+      API[API - FastAPI modular monolith]
+      WK[Temporal workers]
+      DB[(PostgreSQL)]
+      S3[(Object storage)]
+    end
 
-## ChefOS: observed implementation details and unknowns
+    POS -- OAuth pull --> WK
+    POS -- webhooks --> API
+    PUSH -- ingest API --> API
+    PAY -.-> WK
+    API --> WK
+    WK --> DB
+    WK --> S3
+    API --> DB
+    WEB --> API
+    MOB --> API
+```
 
-### Publicly observable technical evidence
+## Modules
 
-- Captured public-site assets include `/_next/static/` paths, Turbopack-named chunks, and Next Flight payload scripts. This strongly indicates that the **marketing site** uses Next.js; it does not establish the authenticated product's frontend framework.
-- The integrations page advertises a REST API, webhooks, API access, and a sample sales-ingest request.
-- The site links to an iOS app and a status page.
-- Product pages show illustrative workspace screens. Treat screenshots, example metrics, connector counts, and feature descriptions as vendor-provided representations, not runtime verification.
+The API is one deployable, organized by module. Modules talk through service interfaces and domain events, not each other's tables.
 
-### Not established by public evidence
+| Module | Owns |
+| --- | --- |
+| **identity** | Organizations, locations, users, roles, sessions, API keys |
+| **integrations** | Connections, sync state, raw records, identity mapping, freshness ([spec](specs/integration-layer.md)) |
+| **commerce** | Sales orders and lines, menu items, daily sales read models, reports |
+| **team** | Employees, positions, schedules, shifts, availability, time off, trades, timecards, tasks |
+| **inventory** | Items, packs and units, pars, counts, suppliers, purchase orders, receiving, recipes, waste, transfers |
+| **sous** | Assistant orchestration, tool registry, drafts ([spec](specs/sous.md)) |
+| **audit** | Append-only audit events |
 
-No evidence here establishes the authenticated app's frontend or backend framework, database or warehouse, cloud provider, deployment model, tenant-isolation design, connector implementation or sync guarantees, event/workflow system, analytics engine, AI provider or grounding/evaluation design, mobile implementation, or production API behavior. The site supports the stated product model and workflow scope, but phrases such as “shared data layer” do not reveal how that layer is built.
+## Data flow
 
-## Proposed stack for a production ChefOS-style product
+1. **Ingest.** The integrations module pulls from connected systems on a schedule, takes webhooks as triggers, and accepts pushes. Raw payloads are stored before any transformation.
+2. **Normalize.** Provider-specific normalizers map raw records onto canonical entities owned by commerce and team. External IDs resolve through `external_refs`. Records that can't be resolved raise mapping issues instead of being dropped.
+3. **Derive.** Read models (`daily_sales`, `daily_labor`) are rebuilt for each affected location and business date. Domain events notify interested modules.
+4. **Serve.** Module APIs serve the web and mobile clients. Any response built on imported data carries a `DataFreshness` block.
+5. **Assist.** Sous calls the same module services through typed tools and carries their freshness through to its answers.
 
-This is a concrete implementation proposal for the product scope described above. It is **not** a claim about ChefOS's production stack and does not change the current local prototype.
+## Core domain model
 
-| Layer | Proposed technology | Role |
-| --- | --- | --- |
-| Web product | Next.js, React, TypeScript | Restaurant manager and employee workspace. The public marketing site appears to use Next.js, but that does not prove the authenticated product does. |
-| Mobile | React Native, TypeScript | Shared mobile workflows for floor and kitchen staff, if native app requirements support code sharing with web. The site's iOS link alone does not identify its implementation. |
-| API and domain logic | Python, FastAPI, Pydantic | Versioned REST API, validation, auth/authorization, and restaurant domain services. Keep it as a modular monolith initially, organized around Commerce, Inventory, Team, and integrations. |
-| Primary database | PostgreSQL | Transactional source of truth for organizations, locations, users, shifts, sales details, inventory movements, invoices, recipes, permissions, and workflow state. Enforce tenant and location scope in service access patterns and database constraints. |
-| Background workflows | Temporal with Python workers | Durable POS/payroll/accounting syncs, invoice capture and matching, sales imports, exports, retries, and schedule-generation jobs. Use idempotency keys and visible run status. |
-| File storage | S3-compatible object storage | Original invoices, exports, and other source documents, with database records for ownership, retention, processing state, and provenance. |
-| Analytics | PostgreSQL read models initially; dbt plus a warehouse only when justified | Keep operational calculations close to domain logic at first. Add dbt when there is a distinct analytical warehouse and repeated SQL transformations; dbt does not replace the API, domain rules, or workflow workers. |
-| AI boundary | Python service layer calling model providers through constrained tools | Sous can query authorized metric/report services and propose supported actions. Keep arithmetic and business rules deterministic where possible; return evidence; isolate writes behind draft, approval, and command handling. See [Sous production architecture](sous-architecture.md). |
-| Infrastructure | AWS, Docker, Terraform | Run API and worker containers, managed PostgreSQL, object storage, secrets, and networking. Use repeatable infrastructure; do not assume a separate customer AWS account is required without a security or contractual need. |
-| Observability | OpenTelemetry-compatible traces, structured logs, metrics, error reporting | Track API health, integration freshness, workflow failures, queue age, and data reconciliation issues without logging sensitive payloads. |
+```
+Organization 1─* Location 1─* {Employee, Shift, Timecard, SalesOrder, InventoryLevel, Count, PurchaseOrder, WasteEntry}
+Organization 1─* {User, Supplier, Item, Recipe, MenuItem, IntegrationConnection}
+MenuItem *─0..1 Recipe *─* Item (via RecipeIngredient, with units)
+SalesOrder 1─* SalesOrderLine *─0..1 MenuItemVariant
+Employee 0..1─1 User      (employees may not have logins)
+IntegrationConnection 1─* LocationLink ─1 Location
+ExternalRef: (connection, entity_type, external_id) → canonical entity
+```
 
-The default deployment should be a **multi-tenant SaaS with logical tenant isolation** in a shared service, unless customer, regulatory, or contractual requirements call for dedicated environments. Every request, background job, report, and AI tool must carry and enforce organization/location scope. A separately deployed service is justified only by a real scaling, isolation, or ownership boundary.
+Conventions:
 
-This stack deliberately keeps the initial system operationally simple: one domain-oriented API, one PostgreSQL source of truth, and durable workers for external and long-running work. Revisit the warehouse, caches, service splits, and per-customer deployment model against measured scale and customer requirements rather than adopting them by default.
+- IDs are UUIDv7. Money is integer minor units plus currency. Times are `timestamptz` (stored in UTC).
+- **Business date** is a first-class column on operational records, computed from the location's timezone and day-start time (default 04:00).
+- Records from external systems keep `source` and `source_version`.
 
-## Architectural implications for a reconstruction
+## Tenancy, auth, and authorization
 
-If implementing the product scope described publicly, a useful conceptual model is a restaurant-specific operational platform, not a generic document-ingestion system. Likely shared concepts include organization/group, location, business date, employee, position, shift, sales transaction and item, inventory item, vendor, purchase pack, count, recipe, waste, and channel. Cross-module calculations and workflows should use consistent identities, units, location context, and time ranges.
+- Every table carries `org_id`. Location-scoped tables also carry `location_id`.
+- Scope is derived from the authenticated session or API key on every request. It is never accepted from request bodies or model output.
+- Enforcement happens twice: in the service layer (explicit scope parameters on every query) and in PostgreSQL row-level security keyed on a per-transaction `app.org_id` setting.
+- Background jobs carry org scope in their workflow input and set it on every DB transaction.
+- Web sessions use HttpOnly SameSite cookies plus CSRF tokens. Mobile uses short-lived access tokens plus refresh tokens. Integrations use scoped API keys (hashed at rest, shown once).
 
-The integration boundary would need to accommodate inbound data from POS and other restaurant systems, outbound actions such as payroll exports, and an API/webhook surface. Operational records need to remain traceable to their source where useful (for example, POS checks or invoices). Long-running imports, invoice capture, and sync retries may call for background jobs, but the public site does not confirm any particular queue or workflow technology.
+## Tech stack
 
-Sous would need permission-aware access to the same operational facts used by reporting, plus clear handling for calculations and actions. A production-oriented proposal is documented in [Sous production architecture](sous-architecture.md): authenticated server-derived scope; intent and parameter validation; allowlisted typed tools; domain-service queries with repeated authorization; evidence-bearing results; schema/evidence validation; traceable responses; and a separate draft/approval/command path for writes. This is a design recommendation, not observed ChefOS behavior. Public marketing does not establish whether the real product uses SQL, retrieval, tools, an LLM, deterministic calculations, or a combination. Do not infer its production architecture from the local deterministic Sous prototype.
+See [ADR 0002](adr/0002-production-stack.md) for the decision and rationale.
 
-Record any implementation choice made without product access as an explicit local design decision. Keep inferred architecture separate from observed ChefOS behavior, and do not treat a plausible schema or service diagram as reverse-engineered fact.
+| Layer | Technology |
+| --- | --- |
+| Web | Next.js, React, TypeScript |
+| Mobile | React Native, TypeScript |
+| API | Python, FastAPI, Pydantic |
+| Database | PostgreSQL (RLS enabled) |
+| Workflows | Temporal, Python workers |
+| Files | S3-compatible object storage |
+| Secrets | AWS KMS envelope encryption; Secrets Manager for service credentials |
+| Infra | AWS, Docker, Terraform |
+| Observability | OpenTelemetry traces, structured logs, metrics, error reporting |
 
-## This repository: current implementation
+## Observability
 
-This repo reconstructs the public marketing site and contains an experimental local workspace prototype. It is not a production ChefOS backend and is not feature parity with the product described above.
+- Traces span API → worker → external call, correlated by request ID or workflow ID.
+- Key metrics: API latency and error rate, per-stream sync lag (`now − data_as_of`), sync failures by error class, quarantine rate, webhook verification failures, queue backlog.
+- Alerts: stream `failing`, connection `needs_reauth`, quarantine rate > 0.1%, cross-tenant invariant violations.
+- Logs never contain OAuth tokens, raw payloads, or employee PII.
 
-- `index.html`, `app.js`, and `styles.css` implement the public-facing site reconstruction.
-- `product.js` implements a local workspace interface.
-- `server.py` is a Python standard-library HTTP server with a same-origin JSON API and SQLite persistence.
-- The prototype stores all workspace organizations in a local SQLite database file outside the web root by default. API queries are logically scoped by organization; this is not evidence of ChefOS's tenant-isolation model.
-- The prototype implements basic restaurant records and CRUD-style workflows, plus a restricted sales-ingestion API key. It has no live third-party connectors, document/invoice ingestion pipeline, distributed workers, cloud provisioning, or production deployment architecture.
-- Its Sous endpoint uses deterministic local queries over prototype records. It does not establish or reproduce ChefOS's advertised AI assistant.
-- The prototype does not implement the proposed production orchestration, model/tool boundary, evidence schema, telemetry/evaluation pipeline, or approval-backed write path described in [Sous production architecture](sous-architecture.md).
-- The server uses Python's standard-library `http.server` and `ThreadingHTTPServer`, suitable for local development only.
+## Repository layout (current)
 
-The current stack was selected to make a runnable prototype, not derived from analysis of ChefOS's private architecture. See [README](../README.md), the [product spec](spec.md), and the [build plan](build_plan.md) for implementation scope and gaps.
+The production services described above do not exist yet. Today's repository contains:
+
+| Path | What it is |
+| --- | --- |
+| `index.html`, `app.js`, `styles.css`, `assets/` | Static reproduction of the ChefOS public marketing site, kept as design reference |
+| `server.py` | Prototype API: Python stdlib HTTP server, SQLite, session auth, CSRF, org-scoped queries |
+| `product.js` | Prototype workspace UI (vanilla JS) served at `/app` |
+| `docs/` | Product and engineering documentation |
+
+The prototype is a UI and workflow sandbox ([ADR 0002](adr/0002-production-stack.md)). Its schema and API are not the production design. It has no background workers, no connectors, and a deterministic keyword-based stand-in for Sous.

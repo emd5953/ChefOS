@@ -1,116 +1,134 @@
-# Sous Production Architecture (Proposal)
+# Sous: Operations Assistant
 
-**Status:** proposed engineering design for a ChefOS-style production assistant. This is not reverse-engineered ChefOS behavior. Public pages advertise Sous capabilities, but the private product architecture and action-confirmation rules have not been observed. The local `/api/v1/sous` implementation is deterministic and does not implement this design.
+**Status:** Proposed · **Owner:** TBD · **Last updated:** 2026-10-19
+**Related:** [ADR 0003: Read-only first](../adr/0003-sous-read-only-first.md), [Integration layer](integration-layer.md), [Architecture](../architecture.md)
 
-## Goals and boundaries
+## Problem
 
-- Answer restaurant operations questions from authorized, current, traceable data.
-- Keep authorization, calculations, and writes in deterministic service code.
-- Use the model for intent interpretation and explanation, not as an authority over tenant scope, business rules, or database access.
-- Start with read-only tools. Add carefully bounded write actions only through a review and approval flow.
-- Preserve a clear audit trail without retaining sensitive prompt or result content by default.
+Managers have operating questions that cut across modules: "Why was labor high Tuesday?", "What's below par for Friday?", "How did brunch do vs last month?" Answering them today means opening several reports and doing arithmetic by hand. A natural-language assistant can help, but only if its answers are correct, scoped to what the user may see, and honest about missing or stale data.
 
-## Request and response flow
+## Goals
+
+- Answer operations questions from authorized, current, traceable data.
+- Return evidence with every answer: values, units, time window, source references, and data freshness.
+- Keep authorization, calculations, and writes in deterministic service code. The model interprets intent and explains results. It doesn't decide scope, compute metrics, or touch the database.
+- Later, propose changes as drafts that a person approves ([ADR 0003](../adr/0003-sous-read-only-first.md)).
+
+## Non-goals (v1)
+
+- Writes of any kind (draft-and-approve comes in a later milestone).
+- General-purpose SQL, code execution, or open web access for the model.
+- Vector search or multi-agent orchestration without a measured need.
+- Payroll, payments, or HR actions.
+
+## Approach
+
+A tool-calling assistant over a small, allowlisted registry of typed read tools. Each tool wraps an existing domain service. The orchestrator classifies intent, validates parameters against the user's scope, calls tools, and asks the model to explain the returned facts. A validator checks that every number in the answer traces to a tool result.
+
+**Alternative considered: text-to-SQL over a read replica.** Rejected. It moves authorization and metric definitions into model output. Errors are silent, and tenant isolation then depends on generated SQL.
+
+## Design
+
+### Request flow
 
 ```mermaid
 sequenceDiagram
     actor Manager
-    participant Client as ChefOS client
-    participant API as API/auth boundary
-    participant Sous as Sous orchestrator
-    participant Policy as Policy and schema validation
-    participant Tools as Typed domain tools
-    participant Domain as Domain services/data
-    participant Trace as Audit/observability
-    Manager->>Client: Ask operations question
+    participant Client
+    participant API as API / auth
+    participant Sous as Orchestrator
+    participant Policy as Policy + schema validation
+    participant Tools as Typed tools
+    participant Domain as Domain services
+    Manager->>Client: Question
     Client->>API: Question + optional view context
-    API->>API: Authenticate; derive org, location, role; assign request ID
-    API->>Sous: Scoped request context
-    Sous->>Policy: Classify intent and validate parameters
-    Policy-->>Sous: Allowed tool set and validated arguments
-    Sous->>Tools: Invoke approved tools
+    API->>API: Authenticate; derive org, locations, role; request ID
+    API->>Sous: Scoped request
+    Sous->>Policy: Classify intent, validate params
+    Policy-->>Sous: Allowed tools + validated args
+    Sous->>Tools: Invoke
     Tools->>Tools: Recheck authorization and scope
-    Tools->>Domain: Parameterized domain query
-    Domain-->>Tools: Authoritative records/metrics
-    Tools-->>Sous: Facts + units, window, source IDs, freshness
-    Sous->>Policy: Compose and validate grounded response
-    Policy-->>API: Typed answer + evidence + limitations
+    Tools->>Domain: Scoped service call
+    Domain-->>Tools: Records / metrics + freshness
+    Tools-->>Sous: Typed facts
+    Sous->>Policy: Validate grounded response
+    Policy-->>API: Answer + evidence + limitations
     API-->>Client: Response
-    Client-->>Manager: Answer with evidence links
-    API->>Trace: Correlated request metadata
-    Sous->>Trace: Model/tool/version/latency metadata
-    Tools->>Trace: Tool outcome metadata
 ```
 
-The caller supplies a question and optional non-authoritative context such as the visible date range. The API derives identity and access scope from the authenticated session. Do not accept user, organization, location, or role claims from the model. The orchestrator classifies intent, validates extracted parameters, and selects from an allowlisted tool registry. If the question is ambiguous, unsupported, outside the user's scope, or cannot be grounded, return a clear clarification, refusal, or limitation.
+### Tool registry
 
-Tools call domain services rather than exposing a database connection to the model. Each tool validates its input, checks organization/location permissions again, uses parameterized queries, enforces result limits, and returns typed facts. Facts should carry units, currency where relevant, business date/time zone, query window, source record references, and freshness/as-of time. Arithmetic and canonical business definitions belong in reporting/domain code. The model explains the returned facts and must not manufacture missing values.
+Each tool has a versioned input/output schema, a required permission, scope rules, a timeout, a result cap, and an error contract. Initial set:
 
-The external response should have a stable schema, for example:
+```
+get_sales_summary(location_ids, from, to, group_by?: day|channel)  → SalesFacts
+get_labor_summary(location_ids, from, to)                          → LaborFacts
+compare_periods(metric, location_ids, period_a, period_b)           → ComparisonFacts
+find_items_below_par(location_ids)                                  → ItemFacts
+get_waste_summary(location_ids, from, to, group_by?)                → WasteFacts
+get_schedule(location_ids, from, to)                                → ScheduleFacts
+```
 
-```json
-{
-  "answer": "Labor was 2.4 percentage points above the target for the selected week.",
-  "period": { "from": "2026-10-12", "to": "2026-10-18", "timezone": "America/New_York" },
-  "evidence": [
-    { "label": "Actual labor cost", "value": 18240, "unit": "USD", "source_refs": ["report:..."], "as_of": "2026-10-19T14:00:00Z" },
-    { "label": "Net sales", "value": 76000, "unit": "USD", "source_refs": ["report:..."], "as_of": "2026-10-19T14:00:00Z" }
-  ],
-  "limitations": []
+Every `*Facts` result includes `period`, `timezone`, `unit`/`currency`, `source_refs`, and `freshness: DataFreshness[]` (from the [integration layer](integration-layer.md)).
+
+### Response contract
+
+```
+SousAnswer {
+  answer: str
+  period: { from: date, to: date, timezone: str }
+  evidence: [{ label, value, unit, source_refs: [str], as_of: datetime }]
+  limitations: [str]          # stale data, partial results, unmapped items
+  request_id: str
 }
 ```
 
-This is an illustrative contract, not a current API response or validated ChefOS metric definition. Define metric formulas and units centrally before shipping.
+### Write path (later milestone)
 
-## Tool design and authorization
+```
+POST /v1/sous/drafts               → Draft { id, intent, targets, diff, impact, expires_at }
+POST /v1/sous/drafts/{id}/approve  ← Idempotency-Key → CommandResult
+```
 
-Create a small registry of narrow operations (for example `get_sales_summary`, `get_labor_summary`, `find_items_below_par`, `get_waste_summary`). Each has a versioned input/output schema, explicit permission requirement, scope rules, timeout, result cap, and error contract. Avoid general-purpose SQL, arbitrary code execution, unrestricted HTTP tools, or write tools exposed to the model by default.
+On approval, the command endpoint reauthenticates the approver, checks draft expiry and that target records haven't changed since the draft, validates business rules, commits atomically, and writes an audit event (actor, approver, draft ID, changed fields, result). Generating or displaying a draft never commits anything.
 
-Resolve organization and location from server-side auth context. Enforce scope in both the tool/service layer and database access pattern; consider database row-level security as defense in depth. Background jobs and cached results must also preserve tenant/location scope. Do not rely solely on prompt instructions to enforce access.
+## Behavior
 
-## Write and approval path
+| Case | Behavior |
+| --- | --- |
+| Clear question, data fresh | Answer with evidence and as-of times |
+| Ambiguous ("how did we do?") | Ask one clarifying question (period, location) |
+| Outside user's location scope | Refuse, and say which locations the user can ask about |
+| Unsupported intent | Say what Sous can answer; don't improvise |
+| Data `stale` or `failing` | Answer with an explicit limitation naming the stream and as-of time |
+| Partial tool failure | Return what succeeded, list what failed; never combine mismatched periods |
+| Number in model output not found in tool results | Validator rejects; retry once, then return the evidence table without prose |
+| Instruction-like text inside imported data | Treated as data; tools return typed fields, never free text that is fed back as instructions |
 
-Writes use a distinct domain command API, not a side effect of answering a question:
+## Verification
 
-1. A supported intent produces a validated draft with target records, before/after diff, assumptions, and impact summary.
-2. The client presents the draft to an authorized person. No write is committed while merely generating or displaying the draft.
-3. On explicit approval, the command endpoint reauthenticates/rechecks the approver's scope, checks draft expiry and source version/current state, validates business rules, and commits atomically where possible.
-4. Use an idempotency key so retries cannot duplicate an action. Return the committed record and outcome.
-5. Record actor, approver, request/draft/command IDs, changed fields, timestamps, and result in an append-only audit event. Keep the audit payload appropriately minimized.
+- Versioned evaluation set of restaurant questions with expected intent, tools, values, evidence, and limitations. Runs in CI on every prompt, model, or tool change.
+- Metrics: answer correctness, evidence coverage, authorization violations (target 0), correct clarify/refuse rate, p95 latency, cost per answer.
+- Tenant isolation and prompt-injection test cases using synthetic data.
+- For writes: draft correctness, approval enforcement, idempotency, audit completeness.
 
-Schedule creation is a useful first candidate for a draft workflow. Payroll, payments, or other consequential actions need their own product policy and controls; do not infer them from a general Sous approval mechanism.
+## Operations
 
-## Reliability, security, and operations
+- Per-request and per-tool timeouts. Retries only for idempotent reads. Per-user rate limits.
+- Traces carry request ID, tool name and version, model and prompt version, latency, tokens, and status. Full prompts and tool results are not logged by default.
+- Prompts, model config, tool schemas, and metric definitions are versioned and rolled out behind flags with rollback.
 
-- Set per-request and per-tool timeouts, bounded retries only for safe/idempotent operations, concurrency limits, and rate limits.
-- Define behavior for unavailable tools and partial data. Label partial results and avoid silently combining incompatible periods or stale sources.
-- Use scoped service identities, secrets management, TLS, least privilege, and redaction. Do not put credentials or unnecessary employee/customer details into model context.
-- Emit a correlated trace across API, orchestrator, tools, and domain services. Capture request ID, user/org IDs in appropriately protected form, tool name/version, model/prompt version, latency, token/cost metadata, status, and error class. Do not log full prompts or sensitive records by default.
-- Monitor availability, p50/p95 latency, tool errors, stale integration data, refusal/clarification rate, cost, and approved-action failures. Alert on authorization denials or cross-tenant invariant violations.
-- Version prompts, model configuration, tool schemas, and metric definitions. Roll out behind feature flags/canaries and retain a rollback path.
+## Risks / open questions
 
-## Quality and release gates
+- Metric definitions must be canonical before Sous ships. Sous inherits any ambiguity in "net sales" or "labor %".
+- Model provider and data-processing terms for employee data need a decision.
+- Answer quality on sparse data (new locations, partial backfill) needs specific evaluation cases.
 
-Maintain a versioned evaluation set of representative restaurant questions with expected intent, allowed tools, calculation results, evidence references, and expected limitations. Evaluate:
+## Milestones
 
-- Metric correctness and date/time-zone handling.
-- Evidence coverage and faithful explanation of returned facts.
-- Permission boundaries, tenant isolation, and prompt-injection resistance.
-- Appropriate clarification/refusal for ambiguous, unsupported, stale, or unauthorized requests.
-- Tool timeout/partial-failure behavior, latency, and model/tool cost.
-- Draft correctness, approval enforcement, idempotency, and audit completeness for writes.
-
-Use synthetic or appropriately de-identified test data. Run checks in CI and compare candidate prompt/model/tool versions before rollout. A model's fluent answer is not a correctness signal.
-
-## Suggested implementation sequence
-
-1. Define canonical metrics, response schemas, scope rules, and a few read-only tools.
-2. Add auth-scoped orchestration and evidence-bearing responses; keep calculations in domain services.
-3. Add traces, redacted audit metadata, rate limits, timeouts, and evaluations before broad exposure.
-4. Pilot read-only Q&A with internal users; measure unsupported questions, data freshness, evidence quality, and cost.
-5. Add one draft-and-approve workflow, such as schedule proposals, only after read-only behavior is reliable and command/audit semantics are defined.
-6. Expand tool coverage based on observed user needs. Add retrieval, a warehouse, or multi-agent orchestration only when measured use cases require them.
-
-## Mapping to this repository
-
-The current prototype has a single deterministic handler at `/api/v1/sous`, a UI under **Workspace → Ask Sous**, and local SQLite records. It is useful as a product boundary for experimentation but has no model provider, tool registry, evidence contract, production auth infrastructure, observability pipeline, or approval-backed command path. The local helper must not be represented as production Sous or feature parity. See [technology notes](tech-stack.md), [product overview](product-overview.md), and [reconstruction spec](spec.md).
+1. Canonical metrics, response schema, scope rules, and three read tools (sales, labor, compare).
+2. Scoped orchestration with evidence-bearing responses and the validator.
+3. Tracing, rate limits, timeouts, and the evaluation set in CI.
+4. Internal read-only pilot. Measure unsupported questions, freshness limitations, evidence quality, and cost.
+5. Draft-and-approve for single shift add/adjust.
+6. Expand tools based on observed questions. Daily briefing.
