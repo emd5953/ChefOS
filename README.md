@@ -1,6 +1,6 @@
-# ChefOS (working name)
+# ChefOS
 
-A restaurant operations platform that runs alongside the POS. It brings sales, labor, and inventory data into one place and builds the daily workflows on top of it: scheduling, reporting, ordering, and an assistant that answers operating questions.
+A learning project: a local, demo-able restaurant operations platform built with production-grade practices, at zero cost. It runs alongside the POS. It brings sales, labor, and inventory data into one place and builds the daily workflows on top of it: scheduling, reporting, ordering, and an assistant that answers operating questions.
 
 Modules: **Team**, **Commerce**, **Inventory**. Shared capabilities: **Integrations** (POS, labor, and supplier data) and **Sous** (assistant).
 

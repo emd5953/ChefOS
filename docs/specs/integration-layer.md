@@ -11,7 +11,7 @@ We need a layer that brings external data in reliably, maps it onto our domain m
 
 ## Goals
 
-- Connect a restaurant's Square account via OAuth and map Square locations to platform locations.
+- Connect a Square sandbox seller account via OAuth and map Square locations to platform locations.
 - Import catalog items, orders (including refunds and returns), team members, and timecards. Keep them current within minutes.
 - Backfill historical data on connect (default 13 months, so year-over-year comparisons work).
 - Make every import idempotent. Replays, duplicate webhooks, and overlapping pulls must converge on the same state.
@@ -24,6 +24,7 @@ We need a layer that brings external data in reliably, maps it onto our domain m
 
 - Writing back to the POS (menu changes, 86 sync, price updates). Read-only scopes only.
 - Payroll, accounting, supplier/invoice, delivery, reservation, and communications connectors. The interfaces must accommodate them, but none are built.
+- Production Square accounts, Square app review, or any cloud deployment ([ADR 0002](../adr/0002-production-stack.md)).
 - Automatic POS item → recipe mapping. v1 provides a manual mapping queue.
 - Real-time (sub-minute) dashboards.
 - Multi-currency organizations.
@@ -53,10 +54,12 @@ Connectors own only `fetch` and `normalize`. Landing, idempotency, identity mapp
 | Concern | Choice |
 | --- | --- |
 | API | FastAPI service, `integrations` module in the modular monolith |
-| Workflows | Temporal (Python SDK) workers: one workflow type per job kind |
-| Storage | PostgreSQL. Raw payloads in `jsonb`; payloads over 256 KB go to S3 with a pointer |
-| Secrets | OAuth tokens envelope-encrypted with AWS KMS; DB stores ciphertext only |
-| Square SDK | Official `squareup` Python SDK, `Square-Version` pinned in config and upgraded deliberately |
+| Workflows | Temporal (Python SDK) workers on the local dev server: one workflow type per job kind |
+| Storage | PostgreSQL. Raw payloads in `jsonb`; payloads over 256 KB go to object storage (MinIO locally) with a pointer |
+| Secrets | OAuth tokens envelope-encrypted through `KeyProvider` (local AES-GCM key from `.env`); DB stores ciphertext only |
+| Square | Developer sandbox only (free). Official `squareup` Python SDK, `Square-Version` pinned in config |
+
+Everything runs locally per [ADR 0002](../adr/0002-production-stack.md). OAuth redirect and webhook delivery need a reachable URL. The redirect works on `localhost`. For webhooks, use a free tunnel (e.g. `cloudflared` quick tunnel) during demos. Scheduled pulls still converge without it.
 
 ### Data model (PostgreSQL)
 
@@ -239,7 +242,7 @@ app/integrations/
   freshness.py        DataFreshness computation
   identity.py         external_refs + mapping_issues
   business_date.py
-  secrets.py          KMS envelope encrypt/decrypt
+  secrets.py          envelope encrypt/decrypt via KeyProvider
   push.py             /v1/ingest/* → pipeline
   providers/square/
     connector.py
@@ -252,7 +255,7 @@ migrations/                     schema above
 
 ### Dependencies
 
-`squareup` (official SDK), `temporalio`, `boto3` (KMS, S3). No unified-API vendor.
+`squareup` (official SDK), `temporalio`, `boto3` (S3 API against MinIO), `cryptography` (AES-GCM). All free. No unified-API vendor.
 
 ## Behavior
 
@@ -312,17 +315,16 @@ migrations/                     schema above
 ## Risks / open questions
 
 - **Square definitions vs ours.** Square's dashboard "net sales" may differ from ours (gift cards, service charges). M3 includes a reconciliation report against Square's totals; differences must be explained, not hidden.
-- **Webhook delivery to a single endpoint** requires one Square application across all merchants. Confirm app review requirements before production use.
 - **Timecard search** has no `updated_at` filter in the versions reviewed, hence the trailing 3-day re-pull. If edits older than 3 days are common, extend the window or add a weekly 30-day sweep.
-- **Raw payload retention** contains employee names and wages. Proposed: 25 months, then purge payloads but keep hashes. Needs a privacy/legal decision.
-- **Backfill depth** of 13 months is assumed sufficient for year-over-year comparisons. Large merchants may take hours. Acceptable because recent days come first.
-- **Second POS choice** (Toast vs Clover) is unresolved. The connector interface should be validated against Toast's API shape before M7 to avoid Square-shaped abstractions.
+- **Raw payload retention:** payloads contain employee names and wages. Decided: 13 months (matching backfill depth), then purge payloads and keep hashes. A daily purge job ships in M7.
+- **Sandbox data volume:** the Square sandbox starts empty. A seed script (part of M2) creates a realistic catalog, orders across channels, refunds, and timecards via the sandbox API so demos have data.
+- **Second POS is Toast**, built against fixtures because partner API access needs approval. Validate the connector interface against Toast's API shape before M2 closes to avoid Square-shaped abstractions.
 
 ## Milestones
 
 Each milestone ships behind a feature flag and leaves the system working.
 
-1. **M1: Foundation.** Schema, KMS secrets, connection model, Square OAuth connect/disconnect, location linking UI. Exit: an owner can connect a sandbox seller and link locations.
+1. **M1: Foundation.** Schema, `KeyProvider` secrets, connection model, Square OAuth connect/disconnect, location linking UI. Exit: an owner can connect a sandbox seller and link locations.
 2. **M2: Catalog + orders pipeline.** Shared pipeline, raw landing, Square catalog and orders incremental sync, identity mapping, mapping-issue queue. Exit: sandbox orders appear as canonical `sales_orders` within 5 min, and replays are no-ops.
 3. **M3: Sales read model + freshness.** Business-date logic, `daily_sales`, `DataFreshness` on Commerce endpoints, reconciliation report vs Square. Exit: Commerce daily view matches Square totals for sandbox test days.
 4. **M4: Webhooks + backfill.** HMAC-verified webhook endpoint, `WebhookFetch`, `Backfill`. Exit: changes land in under 1 min; 13-month backfill completes without starving incremental sync.

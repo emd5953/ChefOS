@@ -13,9 +13,9 @@ The sequence is integration-first. Module features are built on real imported da
 
 ## Phase 0: Platform foundation
 
-FastAPI service skeleton, PostgreSQL with migrations and RLS, identity module (orgs, locations, users, roles, sessions), Temporal cluster and worker skeleton, Terraform for dev and staging, CI, OpenTelemetry wiring.
+Monorepo layout (`apps/api`, `apps/web`, `infra/`), Docker Compose (Postgres, Temporal dev server, MinIO, OTel Collector, Jaeger), FastAPI skeleton, migrations and RLS, identity module (orgs, locations, users, roles, sessions), worker skeleton, `KeyProvider`, GitHub Actions CI (free tier), OpenTelemetry wiring.
 
-**Exit:** a user can sign up, create an org and location, and sign in on staging. A no-op Temporal workflow runs scoped to that org.
+**Exit:** from a clean checkout, `docker compose up` starts everything. A user can sign up, create an org and location, and sign in. A no-op Temporal workflow runs scoped to that org and shows up in Jaeger. CI runs tests, lint, and migrations.
 
 ## Phase 1: Square integration (P0)
 
@@ -31,7 +31,7 @@ FastAPI service skeleton, PostgreSQL with migrations and RLS, identity module (o
 
 ## Phase 2: Commerce on real data (P0)
 
-Web app shell. Commerce daily and date-range views, channel breakdown, period comparisons, labor %, freshness indicators throughout. COM-1 to COM-3.
+Web app shell with the marketing site moved in. Commerce daily and date-range views, channel breakdown, period comparisons, labor %, freshness indicators throughout. COM-1 to COM-3. Delete the prototype (`server.py`, `product.js`) once its screens are covered.
 
 **Exit:** an owner can answer "how did last week compare to the week before, by location and channel, and what was labor %?" without leaving the app. Every number shows its as-of time.
 
@@ -51,13 +51,13 @@ Items, packs and unit conversions, pars, storage-area count sessions with except
 
 Canonical metric definitions, typed read tools over commerce/team/inventory services, evidence and freshness in every answer, evaluation set in CI. [Sous spec](specs/sous.md) steps 1–4.
 
-**Exit:** internal pilot meets evaluation thresholds for metric correctness, evidence coverage, and authorization.
+**Exit:** the evaluation set meets thresholds for metric correctness, evidence coverage, and authorization.
 
 ## Phase 6: Breadth (P1/P2)
 
-Push API (M6), second POS connector, payroll export, shift trades and open shifts, time clock, product mix, daily flash, waste and yield, Sous draft-and-approve shift changes, supplier/invoice connectors, food cost variance.
+Push API (M6), Toast connector (fixtures), payroll export, shift trades and open shifts, product mix, daily flash, waste and yield, Sous draft-and-approve shift changes, supplier/invoice connectors, food cost variance.
 
-Order within Phase 6 is set by pilot customer demand.
+Order within Phase 6 is set by what makes the demo walkthrough strongest.
 
 ## Competitive research (ongoing, not blocking)
 

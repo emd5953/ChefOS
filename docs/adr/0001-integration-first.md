@@ -27,7 +27,7 @@ Module features that need only first-party data, such as task lists and manual i
 
 ## Consequences
 
-- The first customer-visible production feature is "connect your POS and see accurate daily sales," not a full module.
+- The first user-visible feature is "connect your POS and see accurate daily sales," not a full module.
 - The canonical model is shaped by real POS payloads from day one, so we avoid a later migration from prototype-shaped tables.
 - Freshness and source traceability become platform primitives that every module and Sous can rely on.
 - Team and Inventory workflow rebuilds start later than in the previous plan.

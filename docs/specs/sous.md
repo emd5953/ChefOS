@@ -121,7 +121,7 @@ On approval, the command endpoint reauthenticates the approver, checks draft exp
 ## Risks / open questions
 
 - Metric definitions must be canonical before Sous ships. Sous inherits any ambiguity in "net sales" or "labor %".
-- Model provider and data-processing terms for employee data need a decision.
+- The model runs locally via Ollama behind an `LLMProvider` interface ($0, and employee data never leaves the machine). Local models are weaker at tool calling. The evaluation set measures this, and a hosted provider is a config swap if the constraint ever lifts.
 - Answer quality on sparse data (new locations, partial backfill) needs specific evaluation cases.
 
 ## Milestones
@@ -129,6 +129,6 @@ On approval, the command endpoint reauthenticates the approver, checks draft exp
 1. Canonical metrics, response schema, scope rules, and three read tools (sales, labor, compare).
 2. Scoped orchestration with evidence-bearing responses and the validator.
 3. Tracing, rate limits, timeouts, and the evaluation set in CI.
-4. Internal read-only pilot. Measure unsupported questions, freshness limitations, evidence quality, and cost.
+4. Read-only demo run against seeded data. Measure unsupported questions, freshness limitations, evidence quality, and latency.
 5. Draft-and-approve for single shift add/adjust.
 6. Expand tools based on observed questions. Daily briefing.

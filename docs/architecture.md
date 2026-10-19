@@ -5,7 +5,9 @@
 
 ## Overview
 
-A multi-tenant SaaS: one modular-monolith API, one PostgreSQL source of truth, and durable workers for integrations and long-running jobs. External systems feed a shared canonical model, and every module and Sous reads from that model.
+A multi-tenant SaaS design: one modular-monolith API, one PostgreSQL source of truth, and durable workers for integrations and long-running jobs. External systems feed a shared canonical model, and every module and Sous reads from that model.
+
+It runs entirely locally under Docker Compose at zero cost ([ADR 0002](adr/0002-production-stack.md)). Cloud services are replaced by local equivalents behind the same interfaces.
 
 ```mermaid
 flowchart LR
@@ -24,7 +26,8 @@ flowchart LR
       API[API - FastAPI modular monolith]
       WK[Temporal workers]
       DB[(PostgreSQL)]
-      S3[(Object storage)]
+      S3[(MinIO object storage)]
+      LLM[Ollama - local LLM]
     end
 
     POS -- OAuth pull --> WK
@@ -37,6 +40,7 @@ flowchart LR
     API --> DB
     WEB --> API
     MOB --> API
+    API --> LLM
 ```
 
 ## Modules
@@ -91,17 +95,18 @@ Conventions:
 
 See [ADR 0002](adr/0002-production-stack.md) for the decision and rationale.
 
-| Layer | Technology |
-| --- | --- |
-| Web | Next.js, React, TypeScript |
-| Mobile | React Native, TypeScript |
-| API | Python, FastAPI, Pydantic |
-| Database | PostgreSQL (RLS enabled) |
-| Workflows | Temporal, Python workers |
-| Files | S3-compatible object storage |
-| Secrets | AWS KMS envelope encryption; Secrets Manager for service credentials |
-| Infra | AWS, Docker, Terraform |
-| Observability | OpenTelemetry traces, structured logs, metrics, error reporting |
+| Layer | Technology | Local runtime |
+| --- | --- | --- |
+| Web | Next.js, React, TypeScript | `next dev` |
+| Mobile | React Native (Expo), TypeScript | Expo Go / simulator |
+| API | Python, FastAPI, Pydantic | `uvicorn` container |
+| Database | PostgreSQL (RLS enabled) | `postgres` container |
+| Workflows | Temporal, Python workers | Temporal dev server container |
+| Files | S3 API | MinIO container |
+| Secrets | Envelope encryption via `KeyProvider` | AES-GCM key from `.env` |
+| LLM | `LLMProvider` interface | Ollama |
+| Observability | OpenTelemetry traces, structured logs, metrics | OTel Collector + Jaeger containers |
+| Orchestration | Docker Compose | `docker compose up` |
 
 ## Observability
 
@@ -110,9 +115,19 @@ See [ADR 0002](adr/0002-production-stack.md) for the decision and rationale.
 - Alerts: stream `failing`, connection `needs_reauth`, quarantine rate > 0.1%, cross-tenant invariant violations.
 - Logs never contain OAuth tokens, raw payloads, or employee PII.
 
-## Repository layout (current)
+## Repository layout
 
-The production services described above do not exist yet. Today's repository contains:
+Target (created in Phase 0):
+
+```
+apps/api/        FastAPI service and Temporal workers
+apps/web/        Next.js app (workspace + marketing site)
+apps/mobile/     Expo app
+infra/           docker-compose.yml, OTel collector config, seed scripts
+docs/
+```
+
+Current. The production services do not exist yet. Today's repository contains:
 
 | Path | What it is |
 | --- | --- |
@@ -121,4 +136,4 @@ The production services described above do not exist yet. Today's repository con
 | `product.js` | Prototype workspace UI (vanilla JS) served at `/app` |
 | `docs/` | Product and engineering documentation |
 
-The prototype is a UI and workflow sandbox ([ADR 0002](adr/0002-production-stack.md)). Its schema and API are not the production design. It has no background workers, no connectors, and a deterministic keyword-based stand-in for Sous.
+The prototype is a UX reference only ([ADR 0002](adr/0002-production-stack.md)). Its schema and API are not the production design. It's deleted once `apps/web` serves the marketing site and equivalent screens (end of Phase 2). The marketing site moves into `apps/web`.
