@@ -1,60 +1,55 @@
-# Discovery and Delivery Plan
+# Reconstruction Plan
 
-**Status:** Proposed process, not a committed feature roadmap. The repository contains no application code or validated customer requirements. Sequence work by reducing the largest product and delivery risks first.
+**Goal:** Reconstruct the ChefOS product around its advertised restaurant workflows, while keeping public claims, observed product behavior, and our implementation choices distinct. The current local product prototype is a first pass, not a completed app.
 
-## Stage 1 — Select the problem
+## Current state
 
-Talk to representative users and observe the current workflow. Capture user, trigger, frequency, tools, handoffs, failure cost, and workaround. Compare candidate problems by user impact, frequency, feasibility, data access, and strategic fit. Select one initial segment and one workflow; record what is excluded.
+- Public marketing pages were captured and reconstructed in the repository.
+- A local full-stack prototype was added with SQLite persistence and general restaurant records.
+- The prototype is not a faithful workflow reconstruction: it omits or simplifies advertised capabilities such as storage-area count sessions, unit/pack conversion, invoice/AP flow, transfers, demand-informed schedule planning, availability/time-off, Commerce PMix and variance detail, mobile-specific workflows, and connected integrations.
+- Sous currently uses deterministic local responses; it does not establish or reproduce ChefOS's advertised assistant.
+- Public site mockups are illustrative, and no authenticated ChefOS workspace or native app has been inspected.
 
-**Exit evidence:** a named user and job, current baseline, validated pain, measurable target, and an accountable product owner.
+## Work sequence
 
-## Stage 2 — Prove data and workflow feasibility
+### 1. Complete the evidence map
 
-Map the workflow end to end. Identify authoritative sources, data permissions, correction path, timing/freshness needs, integration access, edge cases, and manual fallback. Prototype the riskiest interaction or integration before building broad infrastructure.
+Capture the remaining public product pages and states: FAQ, pricing interactions, legal/security/status surfaces, and any linked product guides. Inspect the App Store listing and native app metadata where available. Preserve the existing REA evidence IDs and record new captures with date, route, method, and limits.
 
-**Exit evidence:** sample data or provider access, data mapping, permission model, failure/recovery design, and a demonstrated path through the critical workflow.
+**Done when:** the public route and mobile-app surface inventory is complete and each capability points to a source.
 
-## Stage 3 — Design and ship the thin vertical slice
+### 2. Get product behavior evidence
 
-Build the smallest complete user journey across client, application/domain logic, persistence, and any necessary connector. Include tenant authorization, observability, audit where needed, recovery, and success instrumentation from the start. Keep unrelated modules and generalized abstractions out of scope.
+Use authorized demo or customer access if available. Map onboarding, organization/location setup, navigation, roles, and the highest-value end-to-end workflows across Team, Commerce, and Inventory. Capture states before and after actions, including errors and corrections. Never fill unknowns with plausible CRUD behavior and call it parity.
 
-**Exit evidence:** target users complete the workflow with real or representative data; acceptance criteria pass; support can diagnose and recover failures; no unresolved critical security or integrity issue.
+**Done when:** each core workflow has reproducible observations, actors, state transitions, and evidence references—or is explicitly blocked as unknown.
 
-## Stage 4 — Validate outcomes and harden
+### 3. Rebuild around restaurant workflows
 
-Run with a limited user cohort. Compare the agreed outcome to its baseline, inspect failures and manual workarounds, reconcile data, and measure reliability and support burden. Fix the highest-impact issues before widening access.
+Prioritize complete cross-module work, not module-shaped screens:
 
-**Exit evidence:** users adopt the flow, outcome moves toward target, reliability objectives are met, and cost/support load is understood.
+1. **Team:** demand context → coverage plan → publish/adjust → employee availability, trades and approvals → shift tasks and attendance.
+2. **Inventory:** storage-area count → unit conversion and exceptions → order → receive and reconcile invoice → stock movement/transfer → recipe and 86 availability → waste/yield and variance.
+3. **Commerce:** date range and daily detail → sales/channel/PMix/margin/labor views → variance and action context.
+4. **Sous and integrations:** ground assistant behavior in real operational data; document connector setup and sync states only as they are evidenced. For a production-style Sous implementation, follow the staged proposal in [Sous production architecture](sous-architecture.md): begin with scoped read-only tools and evidence-bearing responses, add evaluation and observability before rollout, then consider one draft-and-approve write workflow.
+5. **Mobile:** implement the employee, manager, and inventory jobs described on the public mobile page as first-class flows.
 
-## Stage 5 — Expand deliberately
+This ordering is a reconstruction priority, not a claim about ChefOS's internal navigation or release order.
 
-Only then decide whether to deepen the workflow, add the next user segment, integrate another system, or introduce automation/AI. Revisit architecture decisions when measured constraints or product needs trigger them. Do not expand because a competitor advertises the capability.
+### 4. Validate workflow parity
 
-## Definition of ready
+Compare each implemented journey with captured source behavior. Check data meaning, state transitions, permissions, responsive/device context, loading/empty/error states, and correction paths. Track each requirement as observed, vendor claim, inferred, implemented locally, or unknown.
 
-- User problem and outcome are supported by evidence.
-- Scope, exclusions, and owner are clear.
-- Data sources, authority, units/time semantics, and permissions are specified.
-- Failure, retry, correction, and manual recovery behaviors are defined.
-- Acceptance scenarios and measurements are testable.
-- Privacy, security, operational ownership, and rollout plan are reviewed.
+**Done when:** acceptance criteria derive from evidence and no unverified local design is described as ChefOS behavior.
 
-## Definition of done
+## Immediate next work
 
-- End-to-end acceptance criteria are met for authorized and failure cases.
-- Data quality and source reconciliation are verified for the intended use.
-- Logs, metrics, alerts, dashboards/runbooks, and support ownership are in place.
-- Rollback or safe disablement is possible for risky changes.
-- User documentation and known limitations are current.
-- Post-release measurement is assigned and scheduled.
+1. Keep docs accurate (this pass) and label the current app as a prototype.
+2. Inspect the remaining public pages and native app listing.
+3. Obtain authorized workspace access or an artifact with authenticated behavior; without that, the next app changes can only implement the public claims as a clearly labeled interpretation.
+4. Replace the generic workflows with end-to-end Team, Inventory, and Commerce flows after gathering evidence or making explicit product decisions.
+5. For Sous, define canonical metrics and source freshness, validate role/location boundaries, and evaluate evidence and failure handling before making any parity claim. The architecture proposal is a design input; authenticated product evidence is still required to establish ChefOS behavior.
 
-## Current unresolved product decisions
+## Evidence ledger convention
 
-1. Initial target user and restaurant segment.
-2. Highest-value first workflow and baseline metric.
-3. Existing systems and data sources required for that workflow.
-4. Required mobile/offline behavior and deployment constraints.
-5. Data access, retention, and correction expectations.
-6. Whether AI provides measurable value in the selected workflow.
-
-These decisions should be resolved through discovery. The ChefOS research in [product-overview.md](product-overview.md) provides category context only and does not determine these answers.
+For each finding record: capability, source/route, timestamp, evidence ID, evidence type (**observed**, **vendor claim**, **inferred**, **unknown**), confidence, and unresolved questions. Keep direct observations separate from our implementation decisions.

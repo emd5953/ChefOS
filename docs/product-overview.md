@@ -1,49 +1,108 @@
-# Product Direction
+# ChefOS Product Overview
 
-**Status:** Working product direction for our product. This is not a commitment to match another vendor's feature list. User interviews, operating data, and business priorities should refine it.
+**Target:** ChefOS by Counter Labs, [chefos.us](https://chefos.us/). **Reviewed:** 2026-10-18.
+**Basis:** REA captures of public pages. This describes what ChefOS advertises; authenticated product behavior has not been observed. See the [capture record](evidence/2026-10-18-public-site.md).
 
-## Product intent
+## What the product is for
 
-Build an operations product that makes the specific restaurant workflows we choose materially faster and more reliable. The intended advantage is a focused, integrated experience for our users—not breadth for its own sake. Start from their highest-cost recurring decisions and workflow friction, then add capability only when it improves those outcomes.
+ChefOS is presented as an operating system for restaurant operations. It brings **Team**, **Commerce**, and **Inventory** workflows together for restaurant staff, managers, and operators. It is intended to work alongside a restaurant’s existing POS and connected services, replacing disconnected spreadsheets and manual reporting with shared operational information.
 
-The repository does not yet contain customer research, source code, or an approved product roadmap. Audience, first workflow, and success measures remain decisions to validate before implementation scope is fixed.
+The important product outcome is coordinated restaurant work: managers plan labor against demand, teams handle shifts and tasks, operators see sales and cost performance, and inventory activity can inform ordering, menu availability, waste, and food cost. The modules are advertised as connected parts of that operating workflow, not as unrelated record-management pages.
 
-## Working principles
+The site says the product supports single and multi-location operators and describes a shared data layer. That is a product claim; the actual tenant model and cross-module behavior remain unverified.
 
-1. **Start with a real operator job.** Every capability should name its user, trigger, current workaround, and measurable improvement.
-2. **Optimize for the chosen customer.** Avoid assuming that independent restaurants, enterprise groups, retail, and hospitality venues have the same needs.
-3. **Prove workflow value before platform breadth.** Prefer a narrow end-to-end workflow over empty modules and speculative integrations.
-4. **Integrate selectively.** Connect the systems required by the target workflow. Keep the source of truth explicit for each data domain.
-5. **Make operational data trustworthy.** Show freshness, scope, provenance, and gaps; preserve corrections and reconciliation history.
-6. **Keep consequential actions reviewable.** AI and automation can prepare work; people approve actions with financial, staffing, or customer impact.
-7. **Ship an operable product.** Design permissions, recovery, monitoring, support, and data lifecycle alongside the feature.
+## Product areas
 
-## Initial product questions to answer
+### Team
 
-These are discovery questions, not implied features:
+The public Team page describes demand-informed schedule building, employee and position/station/location management, open shifts, shift trades with manager approval, availability and time-off, tasks, attendance, and compliance. Mobile materials add employee schedule access and change alerts, plus manager visibility into staff, tasks, late clock-ins, and approvals.
 
-- Which user and restaurant segment are we optimizing for first?
-- What recurring job causes the greatest avoidable time, cost, or error today?
-- What is the narrowest workflow that can solve it end to end?
-- Which source systems and files are actually present in those customers?
-- Which system owns each critical fact, and who may correct it?
-- What measurable result would justify continued investment?
-- Which constraints are decisive: mobile/offline behavior, deployment model, cost, compliance, or integration access?
+The core workflow implied by the site is: managers build and adjust coverage; employees see schedules and submit availability or shift changes; managers review those changes; and daily tasks and attendance help the team execute the shift. Forecast inputs, labor rules, role permissions, and time-clock semantics are unknown.
 
-## Market reference: ChefOS
+### Commerce
 
-We researched [ChefOS](https://chefos.us/) as one market reference. Its public positioning spans scheduling, inventory/purchasing, sales analytics, waste, team communications, and AI reporting, with connectors to restaurant systems. The company says it works alongside existing POS tools. This is useful for understanding category language and possible workflows; it is not our product specification, architecture, scope, or roadmap.
+The site advertises sales, labor, margin, product mix (PMix), channel, daily flash, and variance reporting. The Commerce page capture exposes a date-range sales timeline with daily date controls and weather context. The product is therefore presented as an operating view for understanding performance over time and relating sales patterns to restaurant conditions.
 
-Public materials are vendor claims and may mix generally available, limited, or planned capabilities. Connector lists and outcome examples are not independently verified. Use the links below for competitive context only; revisit them during market research rather than carrying their claims into requirements.
+Metric formulas, data sources, business-day cutoffs, reconciliation, and whether weather is used analytically or only displayed are unknown. Sample numbers on the public site are illustrative.
 
-### Research links
+### Inventory
 
-- [ChefOS homepage](https://chefos.us/)
-- [Product areas: inventory](https://chefos.us/inventory), [commerce](https://chefos.us/commerce), [team](https://chefos.us/team)
-- [Integrations](https://chefos.us/integrations) and [pricing](https://chefos.us/pricing)
-- [Mobile app page](https://chefos.us/mobile-app) and [App Store listing](https://apps.apple.com/us/app/chefos-mobile/id6763660343)
-- [Privacy](https://chefos.us/privacy), [terms](https://chefos.us/terms), and [security](https://chefos.us/security)
+The Inventory page describes stock counts by storage area and unit, count exceptions, pars, ordering and receiving, pack/unit conversion, invoices and accounts payable, transfers, recipes, waste, and stock alerts. Other public copy mentions prep sheets informed by forecasts, 86-list broadcasting, and theoretical-versus-actual variance.
 
-## Boundary
+The implied workflow covers the flow of goods through a restaurant: count what is on hand, convert and compare quantities, replenish from suppliers, receive and reconcile deliveries, move stock, connect ingredients to menu items, and record shrink or waste. Exact count-session behavior, purchasing approvals, invoice correction, valuation, and variance calculations are unknown.
 
-Do not infer our customer, supported systems, feature availability, pricing, data model, or technology choices from ChefOS. Those decisions belong to our product discovery and engineering design. See [spec.md](spec.md), [tech-stack.md](tech-stack.md), and [build_plan.md](build_plan.md) for our working design process.
+### Cross-cutting workflows
+
+- **Waste and yield:** the site advertises tracking by station, shift, and SKU, with shrink analysis and root-cause signals.
+- **Sous:** the site advertises natural-language questions, reports and briefings, anomaly detection, suggested actions, and schedule generation. It does not establish which actions are automated, what requires confirmation, or how answers cite source data.
+- **Integrations:** the site advertises 48+ connectors spanning POS, payroll/HR, accounting, scheduling/time, inventory/suppliers, delivery, reservations, and communications/identity. Connector availability and data direction are not verified.
+- **Mobile:** public copy describes employee self-service, manager shift operations, and mobile inventory tasks such as counts, invoice scans, 86 risk, and follow-ups. The native app has not been inspected.
+- **Register and handheld:** the homepage labels this hardware area “Coming soon.”
+
+### Sous production workflow (proposed)
+
+The following is an engineering proposal for a ChefOS-style production assistant, not verified ChefOS behavior. Sous should answer from authorized operational data and expose the evidence and freshness behind each answer. Begin with read-only tools. Treat any write as a separate proposed action that a manager reviews and explicitly approves.
+
+```mermaid
+flowchart TD
+    U[Manager in ChefOS] --> UI[Web or mobile client]
+    UI --> API[API gateway]
+    API --> AUTH[Authenticate and derive organization and role scope]
+    AUTH --> ORCH[Sous orchestration service]
+    ORCH --> POLICY[Intent, parameter, and policy checks]
+    POLICY --> PLAN[Select from allowed typed tools]
+    PLAN --> TOOLS[Sales, labor, inventory, and waste tools]
+    TOOLS --> DOMAIN[Domain services and scoped queries]
+    DOMAIN --> DB[(Operational data stores)]
+    TOOLS --> EVID[Structured evidence with units, periods, IDs, freshness]
+    EVID --> RESP[Compose and validate response]
+    RESP --> API
+    API --> UI
+    ORCH --> TRACE[Audit, traces, and metrics]
+    TOOLS --> TRACE
+    RESP --> TRACE
+    PLAN -. proposed write .-> DRAFT[Draft change and impact]
+    DRAFT --> REVIEW[Manager reviews diff]
+    REVIEW -->|Explicit approval| COMMAND[Reauthorize and commit domain command]
+    COMMAND --> DOMAIN
+    COMMAND --> TRACE
+```
+
+Request lifecycle:
+
+1. The client submits a question and optional view context (for example, a date range). Identity and permissions come from the authenticated session, never from model output or caller-supplied tenant IDs.
+2. The API authenticates the user, derives organization/location/role scope, applies request limits, and assigns a request ID.
+3. Sous classifies the request and validates extracted parameters against typed schemas and the user's allowed scope. Unsupported or ambiguous requests should be declined or clarified.
+4. Policy exposes only approved tools for the intent. Every tool independently checks authorization and calls domain services with tenant-scoped, parameterized queries. The model has no unrestricted SQL or database credentials.
+5. Tools return structured facts with units, time window, source references, and data freshness. Deterministic business calculations remain in domain/reporting code where practical.
+6. The model composes an explanation from those results. A validator checks the response schema and evidence coverage; missing, stale, or conflicting data is surfaced rather than guessed.
+7. The API returns a typed response containing the answer, evidence references, period, freshness, and limitations. The UI can link evidence to source records.
+8. For a write request, Sous creates a draft with a diff and impact summary. After explicit user approval, the command path rechecks permissions and current state, validates and commits idempotently, then records the action in the audit trail.
+
+Production concerns include scoped service credentials, secrets management, redaction of sensitive data, bounded timeouts/retries, partial-result handling, rate limits, correlated traces and metrics, and evaluations for correctness, evidence coverage, authorization, refusal/clarification, latency, and cost. Avoid retaining full prompts or sensitive tool results by default. Version tool schemas, prompts, and model choices; stage changes and keep rollback paths. Start with a small set of high-value read tools. Add vector search or multi-agent orchestration only for a demonstrated need.
+
+## What a faithful reconstruction must center
+
+1. The Team, Commerce, and Inventory modules and the work each role performs in them.
+2. The operational flows between modules: demand and sales informing labor and prep; recipes linking menu items to ingredients; counts, receipts, transfers, and waste changing stock; and those events informing cost and availability.
+3. Restaurant concepts and context such as locations, stations, storage areas, shifts, business dates, units, suppliers, and POS channels where the observed product uses them.
+4. The advertised employee and manager mobile workflows, not just a responsive desktop layout.
+5. Connected integrations and Sous as product capabilities whose behavior must be learned from evidence, not replaced with invented integrations or a pretend AI assistant.
+
+This is a reconstruction target derived from public descriptions, not a claim that every advertised capability is shipped. The detailed boundary between observed claims, implementation decisions, and unknown behavior is in the [specification](spec.md).
+
+## Public commercial and company context
+
+The pricing page presents Team, Commerce, and Inventory as selectable modules and advertises $200/month for one module, $300 for two, and $450 for all three at one location, with custom multi-location pricing. Terms, limits, and current contract details are unknown. The site identifies ChefOS with Counter Labs / Counter Hospitality Labs, Inc.
+
+## Sources
+
+- [Homepage](https://chefos.us/) — positioning, feature summary, FAQ, and hardware status.
+- [Team](https://chefos.us/team) — scheduling and labor claims.
+- [Commerce](https://chefos.us/commerce) — analytics page and timeline.
+- [Inventory](https://chefos.us/inventory) — stock, purchasing, and inventory claims.
+- [Integrations](https://chefos.us/integrations) — connector catalog and API claims.
+- [Mobile app](https://chefos.us/mobile-app) — employee, manager, and inventory mobile claims.
+- [Pricing](https://chefos.us/pricing) — public module pricing presentation.
+- [REA capture record](evidence/2026-10-18-public-site.md) — evidence IDs, method, and capture limits.
+- [Proposed Sous architecture](sous-architecture.md) — detailed backend boundary and rollout guidance.
