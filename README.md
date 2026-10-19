@@ -21,6 +21,7 @@ Modules: **Team**, **Commerce**, **Inventory**. Shared capabilities: **Integrati
 | [Architecture](docs/architecture.md) | System design, modules, data model, tenancy |
 | [Roadmap](docs/roadmap.md) | Phases and exit criteria (integration-first) |
 | [ADRs](docs/adr/) | Recorded decisions |
+| [Spec: Platform foundation](docs/specs/platform-foundation.md) | Phase 0: local stack, RLS, auth, workers, CI |
 | [Spec: Integration layer](docs/specs/integration-layer.md) | Square connector, ingestion pipeline, freshness |
 | [Spec: Sous](docs/specs/sous.md) | Assistant design, tools, approval path |
 | [Research: ChefOS](docs/research/chefos-public-site.md) | Competitive research on the reference product |

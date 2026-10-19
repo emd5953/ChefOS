@@ -13,7 +13,7 @@ The sequence is integration-first. Module features are built on real imported da
 
 ## Phase 0: Platform foundation
 
-Monorepo layout (`apps/api`, `apps/web`, `infra/`), Docker Compose (Postgres, Temporal dev server, MinIO, OTel Collector, Jaeger), FastAPI skeleton, migrations and RLS, identity module (orgs, locations, users, roles, sessions), worker skeleton, `KeyProvider`, GitHub Actions CI (free tier), OpenTelemetry wiring.
+[Spec](specs/platform-foundation.md). Monorepo layout (`apps/api`, `apps/web`, `infra/`), Docker Compose (Postgres, Temporal dev server, MinIO, OTel Collector, Jaeger), FastAPI skeleton, migrations and RLS, identity module (orgs, locations, users, roles, sessions), worker skeleton, `KeyProvider`, GitHub Actions CI (free tier), OpenTelemetry wiring.
 
 **Exit:** from a clean checkout, `docker compose up` starts everything. A user can sign up, create an org and location, and sign in. A no-op Temporal workflow runs scoped to that org and shows up in Jaeger. CI runs tests, lint, and migrations.
 
