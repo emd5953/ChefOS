@@ -12,7 +12,7 @@ from tests.team.conftest import Clock, Connect, Connected, at, import_team
 
 TABLES = [
     "staff_members", "positions", "employee_positions", "stations", "employee_locations",
-    "invitations", "schedules", "shifts",
+    "invitations", "schedules", "shifts", "published_shifts", "notifications",
 ]  # fmt: skip
 
 
@@ -46,6 +46,21 @@ async def two(connect: Connect, clock: Clock) -> tuple[Connected, Connected]:
             headers=c.headers,
         )
         assert r.status_code == 201, r.text
+        r = await c.client.post(
+            "/v1/team/schedule/publish",
+            params={"location_id": str(c.location_id), "week_start": monday.isoformat()},
+            json={"expected_version": 1, "acknowledge_conflicts": True},
+            headers=c.headers,
+        )
+        assert r.status_code == 200, r.text
+        async with scoped_session(c.org_id) as db:
+            await db.execute(
+                text(
+                    "INSERT INTO notifications (id, org_id, user_id, kind, title) "
+                    "VALUES (:i, :o, :u, 'schedule_changed', 't')"
+                ),
+                {"i": uuid.uuid4(), "o": c.org_id, "u": c.user_id},
+            )
     return a, b
 
 

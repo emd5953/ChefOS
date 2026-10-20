@@ -361,3 +361,96 @@ class CopyRequest(BaseModel):
 class CopyOut(BaseModel):
     copied: int
     unassigned: int  # copied without an employee (inactive, or overlapping elsewhere)
+
+
+# ---------------------------------------------------------------- publish and notifications
+
+
+class PublishRequest(BaseModel):
+    expected_version: int
+    acknowledge_conflicts: bool = False
+
+
+class EmployeeRef(BaseModel):
+    id: uuid.UUID
+    display_name: str
+
+
+class PublishOut(BaseModel):
+    published_version: int | None
+    changed: bool  # false for a no-op republish
+    changed_employees: list[uuid.UUID]
+    notified_users: int
+    employees_without_login: list[EmployeeRef]
+
+
+class NotificationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    kind: str
+    title: str
+    body: str
+    link: str | None
+    entity_type: str | None
+    entity_id: uuid.UUID | None
+    created_at: datetime
+    read_at: datetime | None
+
+
+class NotificationList(BaseModel):
+    data: list[NotificationOut]
+    unread_count: int
+
+
+class MarkRead(BaseModel):
+    ids: Annotated[list[uuid.UUID], Field(max_length=200)] | None = None
+    all: bool = False
+
+
+class UnreadCount(BaseModel):
+    unread_count: int
+
+
+# ---------------------------------------------------------------- employee self-service (/v1/me)
+
+
+class MyLocation(BaseModel):
+    id: uuid.UUID
+    name: str
+    timezone: str
+
+
+class MyShift(BaseModel):
+    """A published shift as its employee sees it: no rates or costs."""
+
+    id: uuid.UUID
+    location_id: uuid.UUID
+    business_date: date
+    starts_at: datetime
+    ends_at: datetime
+    break_minutes: int
+    position_name: str
+    position_color: str
+    station_name: str | None
+    notes: str
+
+
+class TeamShift(BaseModel):
+    """A teammate's published shift: name, position, and times only."""
+
+    location_id: uuid.UUID
+    business_date: date
+    starts_at: datetime
+    ends_at: datetime
+    employee_name: str
+    position_name: str
+    position_color: str
+
+
+class MyWeek(BaseModel):
+    week_start: date
+    employee: EmployeeRef
+    published_at: datetime | None
+    locations: list[MyLocation]
+    my_shifts: list[MyShift]
+    team_shifts: list[TeamShift]

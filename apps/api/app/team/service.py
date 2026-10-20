@@ -21,6 +21,7 @@ from app.audit import service as audit
 from app.errors import ProblemError, forbidden, not_found, validation_error
 from app.identity.models import Location
 from app.security.sessions import AuthContext
+from app.team import notify
 from app.team.models import (
     EmployeeLocation,
     EmployeePosition,
@@ -707,13 +708,34 @@ async def on_staff_imported(
         if assign:
             await db.execute(pg_insert(EmployeePosition).values(assign).on_conflict_do_nothing())
 
-    for m in members:
-        if m.deactivated:
-            await audit.record(
-                db,
-                org_id=org_id,
-                actor_user_id=None,
-                entity_type="employee",
-                entity_id=m.employee_id,
-                action="employee.deactivated_by_pos",
+    gone = [m for m in members if m.deactivated]
+    if gone:
+        rows = await db.execute(
+            select(StaffMember.id, StaffMember.display_name).where(
+                StaffMember.id.in_([m.employee_id for m in gone])
             )
+        )
+        names = {r.id: r.display_name for r in rows}
+        locations = await employee_location_ids(db, [m.employee_id for m in gone])
+    for m in gone:
+        await audit.record(
+            db,
+            org_id=org_id,
+            actor_user_id=None,
+            entity_type="employee",
+            entity_id=m.employee_id,
+            action="employee.deactivated_by_pos",
+        )
+        # The login is not revoked automatically; managers decide.
+        name = names.get(m.employee_id, "An employee")
+        await notify.notify(
+            db,
+            org_id,
+            await notify.managers_for(db, org_id, locations.get(m.employee_id, set())),
+            kind="employee_deactivated",
+            title=f"{name} was deactivated in Square",
+            body="Their draft shifts are flagged. Published shifts stay until you republish.",
+            link=f"/app/team?employee={m.employee_id}",
+            entity_type="employee",
+            entity_id=m.employee_id,
+        )

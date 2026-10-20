@@ -151,12 +151,15 @@ TEAM_EMPLOYEE_EMAIL = "maya@chefos.local"
 
 
 async def seed_team(org_id: uuid.UUID, owner_user_id: uuid.UUID) -> None:
-    """Team demo data: manager and employee logins (idempotent)."""
+    """Team demo data: manager and employee logins and a published current week (idempotent)."""
     from app.team import demo as team_demo
 
     created = await team_demo.seed_logins(org_id, owner_user_id, DEMO_PASSWORD)
     for email in created:
         print(f"Seeded login: {email}")
+    shifts = await team_demo.seed_week(org_id, owner_user_id)
+    if shifts:
+        print(f"Published this week's schedule ({shifts} shifts).")
 
 
 def main(argv: list[str] | None = None) -> int:

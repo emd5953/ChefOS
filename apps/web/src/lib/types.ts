@@ -357,3 +357,65 @@ export type ScheduleResponse = {
   conflicts: Conflict[];
   freshness: Freshness[];
 };
+
+export type PublishResult = {
+  published_version: number | null;
+  /** False for a republish with no changes (nothing happened). */
+  changed: boolean;
+  changed_employees: string[];
+  notified_users: number;
+  employees_without_login: Array<{ id: string; display_name: string }>;
+};
+
+// ---- Notifications ----
+export type NotificationKind =
+  | "schedule_published"
+  | "schedule_changed"
+  | "time_off_decided"
+  | "availability_decided"
+  | "time_off_requested"
+  | "availability_submitted"
+  | "employee_deactivated";
+export type AppNotification = {
+  id: string;
+  kind: NotificationKind | string;
+  title: string;
+  body: string;
+  link: string | null;
+  entity_type: string | null;
+  entity_id: string | null;
+  created_at: string;
+  read_at: string | null;
+};
+export type NotificationList = { data: AppNotification[]; unread_count: number };
+
+// ---- Employee self-service (/v1/me) ----
+export type MyShift = {
+  id: string;
+  location_id: string;
+  business_date: string;
+  starts_at: string;
+  ends_at: string;
+  break_minutes: number;
+  position_name: string;
+  position_color: string;
+  station_name: string | null;
+  notes: string;
+};
+export type TeamShift = {
+  location_id: string;
+  business_date: string;
+  starts_at: string;
+  ends_at: string;
+  employee_name: string;
+  position_name: string;
+  position_color: string;
+};
+export type MyWeek = {
+  week_start: string;
+  employee: { id: string; display_name: string };
+  published_at: string | null;
+  locations: Array<{ id: string; name: string; timezone: string }>;
+  my_shifts: MyShift[];
+  team_shifts: TeamShift[];
+};

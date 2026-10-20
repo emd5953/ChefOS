@@ -1,14 +1,16 @@
 "use client";
 
-import { Check, ChevronsUpDown, LogOut, MapPin, Package, Plug, Sparkles, Store, TrendingUp, UtensilsCrossed, Users, LayoutDashboard } from "lucide-react";
+import { CalendarDays, Check, ChevronsUpDown, LogOut, MapPin, Package, Plug, Sparkles, Store, TrendingUp, UtensilsCrossed, Users, LayoutDashboard } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ComponentType } from "react";
 import { Brand } from "@/components/brand";
+import { Bell } from "@/components/notifications/bell";
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@/components/ui/menu";
 import { cn } from "@/lib/cn";
 import { useSession } from "@/lib/auth";
 import { useLocationScope } from "@/lib/location-scope";
+import { useHasEmployeeProfile } from "@/lib/queries";
 import { useLogout } from "@/lib/use-logout";
 
 type NavItem = { label: string; path: string; icon: ComponentType<{ className?: string }>; exact?: boolean; soon?: boolean };
@@ -29,11 +31,13 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const scope = useLocationScope();
   const logout = useLogout();
+  const hasProfile = useHasEmployeeProfile();
 
   return (
     <div className="flex h-full flex-col px-4 py-5">
-      <div className="px-2">
+      <div className="flex items-center justify-between pl-2">
         <Brand />
+        <Bell className="hidden lg:grid" />
       </div>
 
       <div className="mt-6 px-2">
@@ -137,6 +141,11 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             <p className="truncate text-xs text-foreground/50">{user.email}</p>
           </div>
           <MenuSeparator />
+          {hasProfile && (
+            <MenuItem render={<Link href="/my" />}>
+              <CalendarDays className="size-4" aria-hidden /> My schedule
+            </MenuItem>
+          )}
           <MenuItem onClick={() => void logout()}>
             <LogOut className="size-4" aria-hidden /> Log out
           </MenuItem>

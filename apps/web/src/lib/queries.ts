@@ -14,6 +14,7 @@ import type {
   Location,
   MappingCandidate,
   MappingIssue,
+  NotificationList,
   Position,
   ScheduleResponse,
   SousStatus,
@@ -42,6 +43,8 @@ export const keys = {
   invitations: ["team", "invitations"] as const,
   schedule: (loc: string, week: string) => ["team", "schedule", loc, week] as const,
   team: ["team"] as const,
+  notifications: ["notifications"] as const,
+  myWeek: (week: string) => ["me", "week", week] as const,
 };
 
 export function useLocations() {
@@ -220,4 +223,30 @@ export function useSchedule(locationId: string | undefined, weekStart: string) {
     enabled: !!locationId,
     placeholderData: keepPreviousData,
   });
+}
+
+// ---- Notifications ----
+
+/** Polls every 60 s while the tab is visible, and on focus (spec: no push delivery). */
+export function useNotifications(enabled = true) {
+  return useQuery({
+    queryKey: keys.notifications,
+    queryFn: () => api<NotificationList>("/v1/notifications"),
+    enabled,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+    retry: false,
+  });
+}
+
+/** Whether the signed-in user has an employee record (managers who also work shifts). */
+export function useHasEmployeeProfile(): boolean {
+  const q = useQuery({
+    queryKey: ["me", "profile"],
+    queryFn: () => api<unknown>("/v1/me/week"),
+    retry: false,
+    staleTime: 10 * 60_000,
+  });
+  return q.isSuccess;
 }

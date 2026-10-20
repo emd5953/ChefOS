@@ -5,6 +5,7 @@ import { Menu as MenuIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { Brand } from "@/components/brand";
+import { Bell } from "@/components/notifications/bell";
 import { Drawer } from "@/components/ui/dialog";
 import { ErrorState } from "@/components/ui/states";
 import { api } from "@/lib/api";
@@ -69,6 +70,8 @@ function Frame({ children }: { children: ReactNode }) {
           <MenuIcon className="size-5" aria-hidden />
         </button>
         <Brand />
+        <span className="flex-1" />
+        <Bell />
       </header>
       <Drawer open={open} onOpenChange={setOpen} title="Navigation">
         <Sidebar onNavigate={() => setOpen(false)} />

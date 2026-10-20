@@ -25,7 +25,7 @@ from app.identity.models import Location
 from app.ids import new_id
 from app.integrations.freshness import location_freshness
 from app.integrations.providers.square.business_date import business_date
-from app.team import forecast
+from app.team import forecast, notify
 from app.team.models import (
     EmployeeLocation,
     EmployeePosition,
@@ -39,7 +39,9 @@ from app.team.models import (
 from app.team.schemas import (
     ConflictOut,
     CopyOut,
+    EmployeeRef,
     FreshnessOut,
+    PublishOut,
     ScheduleDay,
     ScheduleEmployee,
     ScheduleMeta,
@@ -58,6 +60,14 @@ HOURS = Decimal(3600)
 SNAPSHOT_FIELDS = (
     "employee_id", "location_id", "position_id", "station_id", "business_date", "starts_at",
     "ends_at", "break_minutes", "notes",
+)  # fmt: skip
+
+
+# Copied from shifts into published_shifts on publish.
+PUBLISHED_COLUMNS = (
+    "id", "org_id", "location_id", "schedule_id", "employee_id", "position_id", "station_id",
+    "business_date", "starts_at", "ends_at", "break_minutes", "notes", "created_by", "created_at",
+    "updated_at",
 )  # fmt: skip
 
 
@@ -753,3 +763,197 @@ async def copy_week(
         },
     )
     return CopyOut(copied=copied, unassigned=unassigned)
+
+
+# ---------------------------------------------------------------- publish
+
+
+@dataclass(frozen=True)
+class EmployeeDiff:
+    added: list[Shift | PublishedShift]
+    removed: list[Shift | PublishedShift]
+    moved: list[tuple[Shift | PublishedShift, Shift | PublishedShift]]  # (old, new), same id
+
+
+def diff_by_employee(
+    old: Sequence[Shift | PublishedShift],
+    new: Sequence[Shift | PublishedShift],
+    now: datetime,
+) -> dict[uuid.UUID, EmployeeDiff]:
+    """Per employee, what changed between two snapshots. Shifts that ended before `now` are
+    ignored (no alert about the past). A reassigned shift is removed for one person and added
+    for the other."""
+
+    def live(xs: Sequence[Shift | PublishedShift]) -> dict[uuid.UUID, Shift | PublishedShift]:
+        return {s.id: s for s in xs if s.employee_id is not None and s.ends_at > now}
+
+    a, b = live(old), live(new)
+    out: dict[uuid.UUID, EmployeeDiff] = {}
+
+    def entry(emp: uuid.UUID | None) -> EmployeeDiff:
+        assert emp is not None
+        return out.setdefault(emp, EmployeeDiff([], [], []))
+
+    for sid in a.keys() | b.keys():
+        o, n = a.get(sid), b.get(sid)
+        if o is not None and n is not None and o.employee_id == n.employee_id:
+            if snapshot_key(o) != snapshot_key(n):
+                entry(o.employee_id).moved.append((o, n))
+            continue
+        if o is not None:
+            entry(o.employee_id).removed.append(o)
+        if n is not None:
+            entry(n.employee_id).added.append(n)
+    return out
+
+
+def describe(d: EmployeeDiff, zone: ZoneInfo) -> str:
+    parts: list[str] = []
+    for s in sorted(d.added, key=lambda x: x.starts_at):
+        parts.append(f"{label_shift(s.starts_at, s.ends_at, zone)} added")
+    for o, n in sorted(d.moved, key=lambda x: x[1].starts_at):
+        if (o.starts_at, o.ends_at) != (n.starts_at, n.ends_at):
+            day = n.starts_at.astimezone(zone).strftime("%a")
+            parts.append(
+                f"{day} moved to {label_time(n.starts_at, zone)}-{label_time(n.ends_at, zone)}"
+            )
+        else:
+            parts.append(f"{label_shift(n.starts_at, n.ends_at, zone)} updated")
+    for s in sorted(d.removed, key=lambda x: x.starts_at):
+        parts.append(f"{label_shift(s.starts_at, s.ends_at, zone)} removed")
+    return ", ".join(parts)
+
+
+def _week_label(week_start: date) -> str:
+    return f"{week_start.strftime('%b')} {week_start.day}"
+
+
+async def publish(
+    db: AsyncSession,
+    scope: Scope,
+    location_id: uuid.UUID,
+    week_start: date,
+    *,
+    expected_version: int,
+    acknowledge_conflicts: bool,
+) -> PublishOut:
+    """Snapshot the draft for employees in one transaction and alert only who changed."""
+    check_week_start(week_start)
+    loc = await get_location(db, scope, location_id)
+    zone = ZoneInfo(loc.timezone)
+    sched = await lock_schedule(db, scope.org_id, loc.id, week_start)
+    if sched.version != expected_version:
+        raise ProblemError(
+            409,
+            "schedule_changed",
+            "Someone changed this schedule since you loaded it. Review the latest version.",
+            title="Schedule changed",
+        )
+    shifts = list(await db.scalars(select(Shift).where(Shift.schedule_id == sched.id)))
+    old = list(
+        await db.scalars(select(PublishedShift).where(PublishedShift.schedule_id == sched.id))
+    )
+    first = sched.published_version is None
+    if not first and count_changes(shifts, old) == 0:
+        return PublishOut(
+            published_version=sched.published_version,
+            changed=False,
+            changed_employees=[],
+            notified_users=0,
+            employees_without_login=[],
+        )
+
+    employees = await _rates(db, {s.employee_id for s in shifts if s.employee_id is not None})
+    conflicts = await conflicts_for(
+        db, ConflictContext(loc, zone, shifts, employees, await _assigned(db, loc.id))
+    )
+    if any(c.kind == "overlap" for c in conflicts):
+        raise ProblemError(
+            409, "shift_overlap", "Resolve overlapping shifts before publishing.",
+            title="Shift overlaps another shift",
+        )  # fmt: skip
+    if conflicts and not acknowledge_conflicts:
+        raise ProblemError(
+            409,
+            "conflicts_unacknowledged",
+            f"{len(conflicts)} shift conflict(s). Publish with acknowledge_conflicts to proceed.",
+            title="Schedule has conflicts",
+        )
+
+    now = _now()
+    version = (sched.published_version or 0) + 1
+    await db.execute(delete(PublishedShift).where(PublishedShift.schedule_id == sched.id))
+    if shifts:
+        await db.execute(
+            pg_insert(PublishedShift).values(
+                [
+                    {
+                        **{c: getattr(s, c) for c in PUBLISHED_COLUMNS},
+                        "published_version": version,
+                    }
+                    for s in shifts
+                ]
+            )
+        )
+    diffs = diff_by_employee(old, shifts, now)
+    people = await _rates(db, set(diffs))
+    notified = 0
+    kind = "schedule_published" if first else "schedule_changed"
+    link = f"/my?week={week_start.isoformat()}"
+    for emp_id, d in sorted(diffs.items(), key=lambda x: str(x[0])):
+        emp = people.get(emp_id)
+        if emp is None or emp.user_id is None:
+            continue
+        if first:
+            title = f"Your schedule for the week of {_week_label(week_start)} is out"
+            body = ", ".join(
+                label_shift(s.starts_at, s.ends_at, zone)
+                for s in sorted(d.added, key=lambda x: x.starts_at)
+            )
+        else:
+            title = f"Your week of {_week_label(week_start)} changed"
+            body = describe(d, zone)
+        notified += await notify.notify(
+            db,
+            scope.org_id,
+            [emp.user_id],
+            kind=kind,
+            title=title,
+            body=f"{body} at {loc.name}." if body else f"At {loc.name}.",
+            link=link,
+            entity_type="schedule",
+            entity_id=sched.id,
+        )
+    sched.published_version = version
+    sched.published_at = now
+    sched.published_by = scope.user_id
+    without_login = sorted(
+        (e for e in employees.values() if e.user_id is None),
+        key=lambda e: e.display_name.lower(),
+    )
+    changed_ids = sorted(diffs, key=str)
+    await audit.record(
+        db,
+        org_id=scope.org_id,
+        actor_user_id=scope.user_id,
+        entity_type="schedule",
+        entity_id=sched.id,
+        action="schedule.published",
+        location_id=loc.id,
+        details={
+            "week_start": week_start.isoformat(),
+            "version": version,
+            "shift_count": len(shifts),
+            "changed_employee_ids": [str(i) for i in changed_ids],
+            "acknowledged_conflicts": len(conflicts),
+        },
+    )
+    return PublishOut(
+        published_version=version,
+        changed=True,
+        changed_employees=changed_ids,
+        notified_users=notified,
+        employees_without_login=[
+            EmployeeRef(id=e.id, display_name=e.display_name) for e in without_login
+        ],
+    )

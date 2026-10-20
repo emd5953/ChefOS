@@ -19,7 +19,7 @@ The browser reaches the API only through the Next.js origin: `http://localhost:3
   "detail": "…", "request_id": "…", "errors": { "email": "Already registered" } }
 ```
 
-  `code` values: `validation_error`, `unauthenticated`, `session_expired`, `csrf_failed`, `forbidden`, `not_found`, `conflict`, `unavailable`, `internal_error`, `rate_limited`, `sous_unavailable`, `pos_owned_field`, `invitation_invalid` (410), `email_has_account`, `shift_overlap`.
+  `code` values: `validation_error`, `unauthenticated`, `session_expired`, `csrf_failed`, `forbidden`, `not_found`, `conflict`, `unavailable`, `internal_error`, `rate_limited`, `sous_unavailable`, `pos_owned_field`, `invitation_invalid` (410), `email_has_account`, `shift_overlap`, `schedule_changed`, `conflicts_unacknowledged`.
 - Every response carries `X-Request-ID`.
 - Lists are `{ "data": [...] }`.
 
@@ -249,6 +249,7 @@ type DayTotals = { business_date: string; scheduled_hours: number; projected_cos
 | PATCH | `/v1/team/shifts/{id}` | partial `ShiftIn` + `expected_updated_at` (required) | `200 Shift`. `409` if the shift changed since `expected_updated_at` |
 | DELETE | `/v1/team/shifts/{id}` | none | `204` |
 | POST | `/v1/team/schedule/copy?location_id&week_start` | `{ from_week_start }` | `200 { copied, unassigned }`. `409` if the target week has shifts |
+| POST | `/v1/team/schedule/publish?location_id&week_start` | `{ expected_version, acknowledge_conflicts? }` | `200 { published_version, changed, changed_employees: string[], notified_users, employees_without_login: [{ id, display_name }] }` |
 
 ```ts
 type Schedule = {
@@ -270,6 +271,7 @@ type Schedule = {
 - **Validation (422):** end after start, at least 15 minutes, at most 16 hours, break shorter than the shift, business date inside the week, an active employee, a non-archived position, a station of this location. Crossing midnight is allowed.
 - **Overlap:** the same employee on two overlapping shifts at any location is `409 shift_overlap`, naming the other shift. Other conflicts never block a write; they are listed per shift on read.
 - **Forecast:** median net sales (all channels) of the last 4 same-weekday business dates before min(date, today). Days after the location's first sales day with no sales count as 0 (closed). Fewer than 2 dates with history: `null`, `not_enough_history`; no POS: `null`, `not_connected`. Labor % = projected cost ÷ forecast. The week has a forecast only if every day has one.
+- **Publish** runs in one transaction: lock the schedule, check `expected_version` (`409 schedule_changed` if stale; refetch), copy the draft into the published snapshot, and alert only employees whose published shifts were added, removed, moved, or reassigned (shifts that already ended are ignored). The first publish of a week sends `schedule_published`; later ones send `schedule_changed` with a summary ("Fri moved to 5pm-11pm"). Overlaps block publishing (`409 shift_overlap`); any other conflict needs `acknowledge_conflicts: true` (`409 conflicts_unacknowledged`). Republishing an unchanged week is a no-op (`changed: false`, no alerts). Employees without a login are published but listed in `employees_without_login`.
 - **Copy** keeps local wall-clock times (DST-safe). Inactive employees, and employees who already work elsewhere at the copied time, are copied as unassigned.
 
 ### Positions and stations
@@ -282,6 +284,35 @@ type Schedule = {
 | GET | `/v1/team/stations?location_id&include_archived` | none | `200 { data: Station[] }` |
 | POST | `/v1/team/stations` | `{ location_id, name }` | `201 Station` |
 | PATCH | `/v1/team/stations/{id}` | `{ name?, archived? }` | `200 Station` |
+
+## Employee self-service and notifications
+
+Any signed-in role. `/v1/me/*` resolves the employee from the session's user (never a parameter); `404` if the login has no employee record. Responses never include rates or costs.
+
+| Method | Path | Body | Response |
+| --- | --- | --- | --- |
+| GET | `/v1/me/week?week_start` | none | `200 MyWeek`. `week_start` defaults to the current week at the employee's location |
+| GET | `/v1/notifications?unread_only` | none | `200 { data: Notification[] /* newest 50 */, unread_count }` |
+| POST | `/v1/notifications/read` | `{ ids?: string[], all?: boolean }` | `200 { unread_count }`. Only the caller's own notifications |
+
+```ts
+type MyWeek = { week_start: string; employee: { id: string; display_name: string };
+                published_at: string | null;              // null: nothing published for this week yet
+                locations: Array<{ id: string; name: string; timezone: string }>;
+                my_shifts: Array<{ id: string; location_id: string; business_date: string; starts_at: string;
+                                   ends_at: string; break_minutes: number; position_name: string;
+                                   position_color: string; station_name: string | null; notes: string }>;
+                team_shifts: Array<{ location_id: string; business_date: string; starts_at: string; ends_at: string;
+                                     employee_name: string; position_name: string; position_color: string }> }
+type Notification = { id: string; kind: "schedule_published" | "schedule_changed" | "time_off_decided" |
+                        "availability_decided" | "time_off_requested" | "availability_submitted" |
+                        "employee_deactivated";
+                      title: string; body: string; link: string | null /* in-app path */;
+                      entity_type: string | null; entity_id: string | null;
+                      created_at: string; read_at: string | null }
+```
+
+`MyWeek` reads only the published snapshot: draft edits are invisible until the next publish. Notifications are in-app only; clients poll every 60 s while visible and on focus.
 
 ## Sous
 

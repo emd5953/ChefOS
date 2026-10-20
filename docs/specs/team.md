@@ -1,6 +1,6 @@
 # Team (Phase 3)
 
-**Status:** In progress (T1–T3 built) · **Last updated:** 2026-10-20
+**Status:** In progress (T1–T4 built) · **Last updated:** 2026-10-20
 **Related:** [PRD](../prd.md) (TEAM-1 to TEAM-4, MOB-1), [Roadmap](../roadmap.md), [Architecture](../architecture.md), [Integration layer](integration-layer.md), [ADR 0002](../adr/0002-production-stack.md)
 
 ## Problem
@@ -64,7 +64,8 @@ schedules(id, org_id, location_id, week_start date, version int, published_versi
   published_at, published_by, updated_at)                       unique(location_id, week_start)
 shifts(id, org_id, location_id, schedule_id, employee_id null, position_id, station_id null,
   business_date, starts_at, ends_at, break_minutes, notes, created_by, updated_at)
-published_shifts(same columns as shifts + published_version)    -- replaced per schedule on publish
+published_shifts(same columns as shifts + published_version)    -- replaced per schedule on publish;
+                                                                -- id = the draft shift's id, so diffs match by id
 notifications(id, org_id, user_id, kind, title, body, link, entity_type, entity_id,
   created_at, read_at)                                          index(user_id, read_at)
 
@@ -121,26 +122,27 @@ POST   /v1/team/schedule/shifts?location_id&week_start  ← ShiftIn → 201 Shif
 PATCH  /v1/team/shifts/{id}    ← partial ShiftIn + expected_updated_at        DELETE /v1/team/shifts/{id}
 POST   /v1/team/schedule/copy?location_id&week_start ← { from_week_start }   (target week must be empty)
 POST   /v1/team/schedule/publish?location_id&week_start ← { expected_version, acknowledge_conflicts }
-       → { published_version, changed_employees, notified_users, employees_without_login }
+       → { published_version, changed, changed_employees, notified_users, employees_without_login }
 
 GET    /v1/team/requests?location_id&status=pending        → { time_off: [...], availability: [...] }
 POST   /v1/team/time-off/{id}/decide      ← { decision: approve|deny, note? }
 POST   /v1/team/availability/{id}/decide  ← { decision: approve|reject, note? }
 
-GET    /v1/me/week?week_start   → { my_shifts, team_shifts (name, position, times only), published_at }
+GET    /v1/me/week?week_start   → { week_start, employee, published_at, locations,
+                                   my_shifts, team_shifts (name, position, times only) }   week_start defaults to this week
 GET    /v1/me/availability      PUT /v1/me/availability ← { effective_from, blocks[], note? } → pending set
 GET    /v1/me/time-off          POST /v1/me/time-off ← { starts_on, ends_on, start_time?, end_time?, reason? }
 POST   /v1/me/time-off/{id}/cancel
 GET    /v1/notifications?unread_only    POST /v1/notifications/read ← { ids? , all? }
 ```
 
-`ShiftIn = { employee_id?, position_id, station_id?, starts_at, ends_at, break_minutes, notes? }`, times in ISO with offset. The API derives `business_date` from the location's timezone and `business_day_start`. `/v1/me/*` resolves the employee from `ctx.user_id`. It never takes an employee ID. Rates and costs never appear in `/v1/me/*` responses.
+`ShiftIn = { employee_id?, position_id, station_id?, starts_at, ends_at, break_minutes, notes? }`, times in ISO with offset. The API derives `business_date` from the location's timezone and `business_day_start`. `/v1/me/*` resolves the employee from `ctx.user_id` (404 if the login has no employee record). It never takes an employee ID. Rates and costs never appear in `/v1/me/*` responses. `team_shifts` covers the published weeks at the employee's assigned locations (plus any location where they have a published shift).
 
 **Conflicts** (computed on read, listed per shift): `overlap` (same employee, any location; also rejected 409 on write), `time_off_approved`, `time_off_pending`, `unavailable`, `inactive_employee`, `not_assigned_to_location`, `unassigned`. Only `overlap` blocks a write: each write for an employee locks that employee's row, so concurrent writes can't both pass the check. Publish with any other conflict requires `acknowledge_conflicts: true`. The schedule response also lists the roster (`employees`: everyone assigned to the location plus anyone with a shift there) so the grid can render rows without a second call, and `unpublished_changes` (shifts added, removed, or changed versus `published_shifts`) for the publish bar. `has_unpublished_changes` is derived from that diff, not from `version`, so reverting an edit clears it. Copy shifts by whole weeks in local wall time; inactive employees and employees with a clashing shift elsewhere are copied as unassigned.
 
-**Publish** in one transaction: lock the schedule row, check `expected_version`, replace `published_shifts`, diff old vs new per employee (added, removed, time/position/station changed), write one `notifications` row per affected user with a summary ("Your week of Oct 26 changed: Fri 4–11pm added, Sat moved to 5pm"), bump `published_version`, audit. Shifts that ended before now are ignored for alerts. Every shift write bumps `schedules.version`, which drives `has_unpublished_changes`.
+**Publish** in one transaction: lock the schedule row, check `expected_version` (`409 schedule_changed`), refuse overlaps (`409 shift_overlap`) and unacknowledged conflicts (`409 conflicts_unacknowledged`), replace `published_shifts`, diff old vs new per employee (added, removed, time/position/station changed; a reassignment counts for both people), write one `notifications` row per affected user with a summary ("Your week of Oct 26 changed: Fri 4pm-11pm added, Sat moved to 5pm-11pm"), bump `published_version`, audit. Shifts that ended before now are ignored for alerts. Every shift write bumps `schedules.version` for optimistic concurrency; `has_unpublished_changes` is computed from the draft-vs-snapshot diff. A republish whose snapshot would be identical is a no-op (`changed: false`). `employees_without_login` lists everyone with a shift in the published week who has no login.
 
-**Notifications** are in-app only. Clients poll `GET /v1/notifications?unread_only=true` every 60 s while visible and on focus. Kinds: `schedule_published`, `schedule_changed`, `time_off_decided`, `availability_decided` (to employees), `time_off_requested`, `availability_submitted` (to managers of the employee's locations).
+**Notifications** are in-app only. Clients poll `GET /v1/notifications` every 60 s while visible and on focus (the response carries `unread_count`). Kinds: `schedule_published`, `schedule_changed`, `time_off_decided`, `availability_decided` (to employees), `time_off_requested`, `availability_submitted`, `employee_deactivated` (to owners/admins and managers of the employee's locations). Each carries an in-app `link`.
 
 **Audit events** (`audit.record` in the same transaction; `details` holds before/after for updates): `employee.created|updated|merged|deactivated_by_pos`, `position.*`, `station.*`, `invitation.created|revoked|accepted`, `shift.created|updated|deleted`, `schedule.copied|published` (version, shift count, changed employee IDs), `time_off.requested|approved|denied|cancelled`, `availability.submitted|approved|rejected`. POS sync writes no per-row events (it already has `sync_runs`).
 

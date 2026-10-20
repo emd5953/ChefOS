@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { CalendarDays, LayoutDashboard, LogOut, type LucideIcon } from "lucide-react";
+import { Bell, CalendarDays, LayoutDashboard, LogOut, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
@@ -11,13 +11,16 @@ import { ErrorState } from "@/components/ui/states";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/cn";
-import { keys } from "@/lib/queries";
+import { keys, useNotifications } from "@/lib/queries";
 import type { Session } from "@/lib/types";
 import { useLogout } from "@/lib/use-logout";
 
 type Tab = { label: string; path: string; icon: LucideIcon };
 
-const TABS: Tab[] = [{ label: "Schedule", path: "/my", icon: CalendarDays }];
+const TABS: Tab[] = [
+  { label: "Schedule", path: "/my", icon: CalendarDays },
+  { label: "Alerts", path: "/my/alerts", icon: Bell },
+];
 
 /** Mobile-first shell for employees (MOB-1, ADR 0004): sized for a 390 px viewport, bottom tabs. */
 export function MyShell({ children }: { children: ReactNode }) {
@@ -54,6 +57,7 @@ export function MyShell({ children }: { children: ReactNode }) {
 function Frame({ session, children }: { session: Session; children: ReactNode }) {
   const pathname = usePathname();
   const logout = useLogout();
+  const unread = useNotifications().data?.unread_count ?? 0;
   return (
     <div className="mx-auto flex min-h-dvh max-w-[480px] flex-col">
       <header className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b border-border bg-background/90 px-4 backdrop-blur-sm">
@@ -98,7 +102,15 @@ function Frame({ session, children }: { session: Session; children: ReactNode })
                   active ? "text-accent" : "text-foreground/50 hover:text-foreground",
                 )}
               >
-                <Icon className="size-5" aria-hidden />
+                <span className="relative">
+                  <Icon className="size-5" aria-hidden />
+                  {t.path === "/my/alerts" && unread > 0 && (
+                    <span className="absolute -right-2 -top-1.5 min-w-4 rounded-full bg-accent px-1 text-center text-[10px] leading-4 text-white tabular">
+                      {unread > 9 ? "9+" : unread}
+                      <span className="sr-only"> unread</span>
+                    </span>
+                  )}
+                </span>
                 {t.label}
               </Link>
             );

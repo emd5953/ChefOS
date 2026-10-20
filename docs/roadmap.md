@@ -13,7 +13,7 @@ As of 2026-10-20:
 - **Phase 1:** M1–M5 done in simulated mode. Real-sandbox mode is untested.
 - **Phase 2:** done. Commerce views built, marketing site moved into `apps/web`, prototype deleted.
 - **Phase 5:** Sous read-only built ahead of order over Commerce data (milestones 1–4). The eval set passes 39/40 on qwen3:8b. Team and Inventory tools follow their modules.
-- **Phase 3:** in progress ([spec](specs/team.md)). T1 (employees and positions), T2 (logins and roles), and T3 (schedule builder and forecast) done.
+- **Phase 3:** in progress ([spec](specs/team.md)). T1 (employees and positions), T2 (logins and roles), T3 (schedule builder and forecast), and T4 (publish, alerts, employee mobile view; [ADR 0004](adr/0004-mobile-as-responsive-web.md)) done.
 - **Phases 4, 6:** not started.
 - **Prototype workspace:** deleted from `main`. UX reference at tag `prototype-v0`; run it with `git worktree add ../chefos-prototype prototype-v0 && cd ../chefos-prototype && python3 server.py`.
 

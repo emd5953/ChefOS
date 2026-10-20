@@ -10,8 +10,8 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Query, Request, Response
 
 from app.identity.schemas import OrgOut, SessionOut, UserOut
-from app.security.sessions import OrgSession, StaffDep, set_session_cookie
-from app.team import invitations, schedule, service
+from app.security.sessions import AuthDep, OrgSession, StaffDep, set_session_cookie
+from app.team import invitations, me, notify, schedule, service
 from app.team.schemas import (
     CopyOut,
     CopyRequest,
@@ -25,11 +25,16 @@ from app.team.schemas import (
     InvitationList,
     InvitationOut,
     InvitationPreview,
+    MarkRead,
     MergeRequest,
+    MyWeek,
+    NotificationList,
     PositionCreate,
     PositionList,
     PositionOut,
     PositionUpdate,
+    PublishOut,
+    PublishRequest,
     ScheduleOut,
     ShiftIn,
     ShiftOut,
@@ -38,11 +43,14 @@ from app.team.schemas import (
     StationList,
     StationOut,
     StationUpdate,
+    UnreadCount,
 )
 
 router = APIRouter()
 team = APIRouter(prefix="/v1/team", tags=["team"])
 public = APIRouter(prefix="/v1/invitations", tags=["team"])
+# Any signed-in role, including employees.
+mine = APIRouter(prefix="/v1", tags=["team"])
 
 LocationId = Annotated[uuid.UUID, Query()]
 WeekStart = Annotated[date, Query()]
@@ -174,6 +182,24 @@ async def copy_week(
     return await schedule.copy_week(db, scope, location_id, week_start, body.from_week_start)
 
 
+@team.post("/schedule/publish", response_model=PublishOut)
+async def publish(
+    body: PublishRequest,
+    ctx: StaffDep,
+    db: OrgSession,
+    location_id: LocationId,
+    week_start: WeekStart,
+) -> PublishOut:
+    return await schedule.publish(
+        db,
+        await service.scope_for(ctx),
+        location_id,
+        week_start,
+        expected_version=body.expected_version,
+        acknowledge_conflicts=body.acknowledge_conflicts,
+    )
+
+
 # ---------------------------------------------------------------- invitations
 
 
@@ -227,5 +253,28 @@ async def accept_invitation(
     )
 
 
+# ---------------------------------------------------------------- self-service
+
+
+@mine.get("/me/week", response_model=MyWeek)
+async def my_week(ctx: AuthDep, db: OrgSession, week_start: date | None = None) -> MyWeek:
+    return await me.my_week(db, ctx.org_id, ctx.user_id, week_start)
+
+
+@mine.get("/notifications", response_model=NotificationList)
+async def list_notifications(
+    ctx: AuthDep, db: OrgSession, unread_only: bool = False
+) -> NotificationList:
+    rows, unread = await notify.list_for(db, ctx.org_id, ctx.user_id, unread_only=unread_only)
+    return NotificationList(data=rows, unread_count=unread)
+
+
+@mine.post("/notifications/read", response_model=UnreadCount)
+async def read_notifications(body: MarkRead, ctx: AuthDep, db: OrgSession) -> UnreadCount:
+    n = await notify.mark_read(db, ctx.org_id, ctx.user_id, ids=body.ids, all_=body.all)
+    return UnreadCount(unread_count=n)
+
+
 router.include_router(team)
+router.include_router(mine)
 router.include_router(public)
