@@ -21,6 +21,12 @@ INTEGRATION_RLS_TABLES = {
     "menu_item_variants", "staff_members", "sales_orders", "sales_order_lines",
     "sales_order_returns", "timecards", "daily_sales", "daily_labor",
 }  # fmt: skip
+# Team tables (behavior is covered in tests/team/test_rls_team.py).
+TEAM_RLS_TABLES = {
+    "positions", "employee_positions", "stations", "employee_locations", "invitations",
+    "schedules", "shifts", "published_shifts", "notifications", "availability_sets",
+    "availability_blocks", "time_off_requests",
+}  # fmt: skip
 # Tables with an org_id column that are intentionally NOT under RLS (accessed only by auth code
 # before org scope exists). Adding to this set requires a reason.
 NO_RLS_ALLOWED = {"sessions"}
@@ -205,3 +211,6 @@ async def test_every_org_scoped_table_has_rls(owner_engine: AsyncEngine) -> None
     assert tables >= INTEGRATION_RLS_TABLES
     assert policies >= INTEGRATION_RLS_TABLES
     assert all(rls[t] for t in INTEGRATION_RLS_TABLES)
+    assert tables >= TEAM_RLS_TABLES
+    assert policies >= TEAM_RLS_TABLES
+    assert all(rls[t] for t in TEAM_RLS_TABLES)

@@ -1,6 +1,6 @@
 # Team (Phase 3)
 
-**Status:** Proposed · **Last updated:** 2026-10-20
+**Status:** Built (T1–T5) · see Implementation notes · **Last updated:** 2026-10-20
 **Related:** [PRD](../prd.md) (TEAM-1 to TEAM-4, MOB-1), [Roadmap](../roadmap.md), [Architecture](../architecture.md), [Integration layer](integration-layer.md), [ADR 0002](../adr/0002-production-stack.md)
 
 ## Problem
@@ -48,8 +48,9 @@ staff_members  + email citext null, phone null, user_id uuid null → users,
                  rate_override bigint null, source text ('square'|'manual'),
                  merged_into_id uuid null, updated_at
                  unique(org_id, user_id)
-positions(id, org_id, name, color, created_at)                 unique(org_id, lower(name))
+positions(id, org_id, name, color, created_at, archived_at)    unique(org_id, lower(name))
 employee_positions(org_id, employee_id, position_id, is_primary) pk(employee_id, position_id)
+                                                                unique(employee_id) where is_primary
 stations(id, org_id, location_id, name, archived_at)            -- optional label on a shift
 employee_locations(org_id, employee_id, location_id)            pk(employee_id, location_id)
 
@@ -63,82 +64,87 @@ schedules(id, org_id, location_id, week_start date, version int, published_versi
   published_at, published_by, updated_at)                       unique(location_id, week_start)
 shifts(id, org_id, location_id, schedule_id, employee_id null, position_id, station_id null,
   business_date, starts_at, ends_at, break_minutes, notes, created_by, updated_at)
-published_shifts(same columns as shifts + published_version)    -- replaced per schedule on publish
+published_shifts(same columns as shifts + published_version)    -- replaced per schedule on publish;
+                                                                -- id = the draft shift's id, so diffs match by id
 notifications(id, org_id, user_id, kind, title, body, link, entity_type, entity_id,
   created_at, read_at)                                          index(user_id, read_at)
 
 -- 0008
 availability_sets(id, org_id, employee_id, status ('pending'|'approved'|'rejected'|'superseded'),
   effective_from date, note, submitted_by, submitted_at, decided_by, decided_at, decision_note)
-availability_blocks(org_id, set_id, weekday smallint, start_time null, end_time null)
-  -- unavailable windows, location-local; null times = all day
+availability_blocks(id, org_id, set_id, weekday smallint, start_time null, end_time null)
+  -- unavailable windows, location-local, weekday 0 = Monday; null times = all day;
+  -- otherwise start_time < end_time within the day
 time_off_requests(id, org_id, employee_id, starts_on date, ends_on date, start_time null,
   end_time null, reason, status ('pending'|'approved'|'denied'|'cancelled'),
   created_at, decided_by, decided_at, decision_note)
 ```
 
-Invitation acceptance happens before any org scope exists. Like `integration_connection_for_account`, a narrow `SECURITY DEFINER` function `invitation_for_token(p_hash) → (invitation_id, org_id)` is the only way around RLS. It returns nothing for expired, revoked, or accepted invitations.
+Invitation acceptance happens before any org scope exists. Like `integration_connection_for_account`, a narrow `SECURITY DEFINER` function `invitation_for_token(p_hash) → (invitation_id, org_id)` is the only way around RLS (`app.db.lookup_invitation`). It returns nothing for expired, revoked, or accepted invitations. Everything after the lookup runs in one transaction scoped to that org (`users` and `sessions` have no RLS), so `unscoped_session` stays confined to the auth code; the throttle check goes through two small `app.identity.service` helpers.
 
 ### Employee linking
 
-- **POS → employee.** Unchanged path: `process_team_members` creates or updates a `staff_members` row and its `external_refs` entry. Two additions: the Square normalizer also returns `email_address` and `assigned_locations`, and the pipeline then calls `team.service.on_staff_imported(db, org_id, ids)`. That hook (a) sets `email` if empty, (b) inserts `employee_locations` for assigned locations that are linked on the connection (insert-only, never removes), and (c) creates a `positions` row per distinct job title and assigns it as primary if the employee has none. Unlinked timecard-only members still go through the existing `unmapped_team_member` mapping queue.
-- **Manual employees** (`source = 'manual'`) cover staff who aren't in the POS. If the same person later appears from Square, the duplicate is resolved with **merge** (`from → into`): repoints `external_refs`, `timecards`, `shifts`, requests, and `user_id` to `into`, then sets `from.active = false, merged_into_id = into`. One transaction, one audit event. Merge is refused if both records have a `user_id`.
-- **Employee → user.** `staff_members.user_id` is 0..1 per org (architecture: `Employee 0..1─1 User`). It's set only by accepting an invitation created from that employee record, which pre-fills the email from Square. Accepting creates the `users` row (or 409 if the email already has an account, see Risks), a `memberships` row with the invited role, `location_access` rows, and links the employee. Tokens are 256-bit, stored as SHA-256, valid 7 days, single use.
+- **POS → employee.** Unchanged path: `process_team_members` creates or updates a `staff_members` row and its `external_refs` entry. Two additions: the Square normalizer also returns `email_address` and `assigned_locations`, and the pipeline then calls `team.service.on_staff_imported(db, org_id, ids)`. That hook (a) sets `email` if empty, (b) inserts `employee_locations` for assigned locations that are linked on the connection (insert-only, never removes), and (c) creates a `positions` row per distinct job title and assigns it as primary if the employee has no positions at all (so an employee whose positions a manager cleared gets the POS title back on the next sync; one with any position is left alone). The pipeline's upsert writes only name, job title, POS rate, and active, and only when they changed. An active-to-inactive transition writes one `employee.deactivated_by_pos` event (the only per-row sync event). Unlinked timecard-only members still go through the existing `unmapped_team_member` mapping queue.
+- **Manual employees** (`source = 'manual'`) cover staff who aren't in the POS. If the same person later appears from Square, the duplicate is resolved with **merge** (`from → into`): repoints `external_refs`, `timecards`, `shifts`, requests, and `user_id` to `into`, unions positions and locations, fills `into`'s empty email/phone/rate override from `from`, then sets `from.active = false, merged_into_id = into`. If `from` is POS-linked, `into` becomes `source = 'square'` and takes `from`'s POS-owned fields, since sync now writes to it. One transaction, one audit event. Merge is refused if both records have a `user_id` or either was already merged.
+- **Employee → user.** `staff_members.user_id` is 0..1 per org (architecture: `Employee 0..1─1 User`). It's set only by accepting an invitation created from that employee record, which pre-fills the email from Square (the inviter may override it). An invitation without `employee_id` invites a manager who isn't on the schedule (owner/admin only); `email` is then required. A new invitation for the same employee revokes the pending one. The accept link is `{WEB_ORIGIN}/invite/{token}`. Acceptance is throttled by sharing the per-IP failed-login counter: each invalid token counts as a failure. Accepting creates the `users` row (or 409 if the email already has an account, see Risks), a `memberships` row with the invited role, `location_access` rows, and links the employee. Tokens are 256-bit, stored as SHA-256, valid 7 days, single use.
 - **Effective rate** for projections = `rate_override` ?? POS `hourly_rate` ?? null. Null is shown as "no rate" and excluded from cost (flagged, not guessed).
 
 ### Forecast and projected labor
 
-**Forecast sales** for business date D at a location = the **median of net sales on the last 4 complete same-weekday business dates** before today (from `daily_sales`, summed across channels). With fewer than 2 such dates, the forecast is null with reason `not_enough_history`.
+**Forecast sales** for business date D at a location = the **median of net sales on the last 4 complete same-weekday business dates** before min(D, today) (from `daily_sales`, summed across channels), so a past day in the current week is forecast from the weeks before it rather than from its own actuals. Dates on or after the location's first sales day without a `daily_sales` row are closed days and count as 0; dates before it are not history. With fewer than 2 dates with history, the forecast is null with reason `not_enough_history`; with no POS connection, `not_connected`. An even count averages the middle pair (rounded half up to the cent).
 
 Why this method: restaurant demand is dominated by day-of-week (the simulated seller's demand table is literally per weekday), so same-weekday history captures the main signal. Four weeks tracks seasonal drift without needing the 13-month backfill. Median instead of mean keeps one-offs from distorting a day: a $4,800 buyout or a snowstorm Saturday in the window moves the forecast by at most the gap between the two middle values. It is deterministic, computed on read from 28 days of an indexed read model, needs no new dependency, and fits in one sentence in the UI ("Median of the last 4 Fridays"). Rejected: year-over-year with growth adjustment (calendar alignment, holidays, needs full backfill); exponential smoothing or Prophet-style models (opaque, a new dependency, and no better on 4–8 weeks of history). The forecast carries the `orders` stream's `DataFreshness`.
 
-**Projection** per shift: `paid_hours = (ends_at − starts_at) − break_minutes` (timestamp difference, so DST days are correct); `cost = paid_hours × effective_rate`. Per day: scheduled hours, projected cost, forecast, projected labor % = cost / forecast (null if the forecast is null or 0). Per week: the same totals. The builder also shows last 4 weeks' actual labor % from the existing Commerce summary as a reference.
+**Projection** per shift: `paid_hours = (ends_at − starts_at) − break_minutes` (timestamp difference, so DST days are correct); `cost = paid_hours × effective_rate`. Per day: scheduled hours, projected cost, forecast, projected labor % = cost / forecast (null if the forecast is null or 0). Unassigned shifts count as unrated (hours in, cost out). Per week: the same totals; the week forecast is null unless every day has one, so a partial sum never understates labor %. The builder also shows the last 28 days' actual labor % from the existing Commerce summary as a reference. Hours are computed in UTC: Python subtracts two datetimes that share a tzinfo by wall clock, which is wrong across DST.
 
 ### Service and HTTP API
 
-Module `app/team/` (`models.py`, `schemas.py`, `service.py`, `forecast.py`, `notify.py`, `api.py`). Location scope uses `ctx.allowed_location_ids()` as Commerce does. **Manage** = owner, admin, or manager with access to the location. Managers may invite only the `employee` role and can't merge employees. A new `require_staff_role` dependency (owner/admin/manager) is added to Commerce, Sous, Integrations, and location-write routes so `employee` sessions get 403.
+Module `app/team/` (`models.py`, `schemas.py`, `service.py`, `forecast.py`, `notify.py`, `api.py`). Location scope uses `ctx.allowed_location_ids()` as Commerce does. **Manage** = owner, admin, or manager with access to the location. A manager sees employees assigned to at least one of their locations; editing an employee's locations only adds or removes locations the manager can access. Managers may invite only the `employee` role and can't merge employees. Positions are org-wide and can be archived (hidden from pickers, kept on existing records); stations belong to a location. A new `require_staff_role` dependency (`StaffDep`, owner/admin/manager) is added to Commerce, Sous, Integrations, and every `/v1/team/*` route so `employee` sessions get 403 (location writes were already owner/admin only). Employees keep `/v1/auth/*`, `GET /v1/org`, `GET /v1/locations`, `/v1/me/*`, and `/v1/notifications`.
 
 ```
 GET    /v1/team/employees?location_id&include_inactive        → { data: Employee[] }        manage
-POST   /v1/team/employees      ← { display_name, email?, phone?, location_ids, positions[], rate_override? }
+POST   /v1/team/employees      ← { display_name, email?, phone?, location_ids, positions: [{ position_id, is_primary? }], rate_override? }
 PATCH  /v1/team/employees/{id} ← team-owned fields only; POS-owned field → 422 pos_owned_field
 POST   /v1/team/employees/{id}/merge ← { into_id }                                       owner/admin
 GET|POST|PATCH /v1/team/positions[/{id}]      GET|POST|PATCH /v1/team/stations[/{id}]?location_id
 
-POST   /v1/team/invitations    ← { employee_id, role, location_ids } → 201 { invitation, accept_url }  (URL shown once)
+POST   /v1/team/invitations    ← { employee_id?, email?, role, location_ids } → 201 { invitation, accept_url }  (URL shown once)
 GET    /v1/team/invitations?status=pending    POST /v1/team/invitations/{id}/revoke
 GET    /v1/invitations/{token}                → { org_name, email, role, employee_name, expires_at }   (no auth)
 POST   /v1/invitations/{token}/accept ← { display_name, password } → 201 + session cookie (no auth, throttled)
 
 GET    /v1/team/schedule?location_id&week_start
-       → { schedule: { version, published_version, has_unpublished_changes }, shifts: Shift[],
+       → { schedule: { version, published_version, has_unpublished_changes, unpublished_changes },
+           shifts: Shift[], employees: [{ id, display_name, active, primary_position_id, has_rate, assigned }],
            days: [{ business_date, scheduled_hours, projected_cost, unrated_shifts,
-                    forecast_sales, forecast_basis: date[], projected_labor_pct }],
-           week: {...same totals}, conflicts: Conflict[], freshness: DataFreshness }
+                    forecast_sales, forecast_basis: date[], forecast_reason, projected_labor_pct }],
+           week: {...same totals, reference_labor_pct}, conflicts: Conflict[], freshness: Freshness[] }
 POST   /v1/team/schedule/shifts?location_id&week_start  ← ShiftIn → 201 Shift
 PATCH  /v1/team/shifts/{id}    ← partial ShiftIn + expected_updated_at        DELETE /v1/team/shifts/{id}
 POST   /v1/team/schedule/copy?location_id&week_start ← { from_week_start }   (target week must be empty)
 POST   /v1/team/schedule/publish?location_id&week_start ← { expected_version, acknowledge_conflicts }
-       → { published_version, changed_employees, notified_users, employees_without_login }
+       → { published_version, changed, changed_employees, notified_users, employees_without_login }
 
-GET    /v1/team/requests?location_id&status=pending        → { time_off: [...], availability: [...] }
+GET    /v1/team/requests?location_id&status=pending|history → { time_off: [...], availability: [...] }
 POST   /v1/team/time-off/{id}/decide      ← { decision: approve|deny, note? }
 POST   /v1/team/availability/{id}/decide  ← { decision: approve|reject, note? }
 
-GET    /v1/me/week?week_start   → { my_shifts, team_shifts (name, position, times only), published_at }
-GET    /v1/me/availability      PUT /v1/me/availability ← { effective_from, blocks[], note? } → pending set
+GET    /v1/me/week?week_start   → { week_start, employee, published_at, locations,
+                                   my_shifts, team_shifts (name, position, times only) }   week_start defaults to this week
+GET    /v1/me/availability → { current, pending, upcoming }
+PUT    /v1/me/availability ← { effective_from, blocks[], note? } → pending set
 GET    /v1/me/time-off          POST /v1/me/time-off ← { starts_on, ends_on, start_time?, end_time?, reason? }
 POST   /v1/me/time-off/{id}/cancel
 GET    /v1/notifications?unread_only    POST /v1/notifications/read ← { ids? , all? }
 ```
 
-`ShiftIn = { employee_id?, position_id, station_id?, starts_at, ends_at, break_minutes, notes? }`, times in ISO with offset. The API derives `business_date` from the location's timezone and `business_day_start`. `/v1/me/*` resolves the employee from `ctx.user_id`. It never takes an employee ID. Rates and costs never appear in `/v1/me/*` responses.
+`ShiftIn = { employee_id?, position_id, station_id?, starts_at, ends_at, break_minutes, notes? }`, times in ISO with offset. The API derives `business_date` from the location's timezone and `business_day_start`. `/v1/me/*` resolves the employee from `ctx.user_id` (404 if the login has no employee record). It never takes an employee ID. Rates and costs never appear in `/v1/me/*` responses. `team_shifts` covers the published weeks at the employee's assigned locations (plus any location where they have a published shift).
 
-**Conflicts** (computed on read, listed per shift): `overlap` (same employee, any location; also rejected 409 on write), `time_off_approved`, `time_off_pending`, `unavailable`, `inactive_employee`, `not_assigned_to_location`, `unassigned`. Only `overlap` blocks a write. Publish with any other conflict requires `acknowledge_conflicts: true`.
+**Conflicts** (computed on read, listed per shift): `overlap` (same employee, any location; also rejected 409 on write), `time_off_approved`, `time_off_pending`, `unavailable`, `inactive_employee`, `not_assigned_to_location`, `unassigned`. Only `overlap` blocks a write: each write for an employee locks that employee's row, so concurrent writes can't both pass the check. Publish with any other conflict requires `acknowledge_conflicts: true`. The schedule response also lists the roster (`employees`: everyone assigned to the location plus anyone with a shift there) so the grid can render rows without a second call, and `unpublished_changes` (shifts added, removed, or changed versus `published_shifts`) for the publish bar. `has_unpublished_changes` is derived from that diff, not from `version`, so reverting an edit clears it. Copy shifts by whole weeks in local wall time; inactive employees and employees with a clashing shift elsewhere are copied as unassigned.
 
-**Publish** in one transaction: lock the schedule row, check `expected_version`, replace `published_shifts`, diff old vs new per employee (added, removed, time/position/station changed), write one `notifications` row per affected user with a summary ("Your week of Oct 26 changed: Fri 4–11pm added, Sat moved to 5pm"), bump `published_version`, audit. Shifts that ended before now are ignored for alerts. Every shift write bumps `schedules.version`, which drives `has_unpublished_changes`.
+**Publish** in one transaction: lock the schedule row, check `expected_version` (`409 schedule_changed`), refuse overlaps (`409 shift_overlap`) and unacknowledged conflicts (`409 conflicts_unacknowledged`), replace `published_shifts`, diff old vs new per employee (added, removed, time/position/station changed; a reassignment counts for both people), write one `notifications` row per affected user with a summary ("Your week of Oct 26 changed: Fri 4pm-11pm added, Sat moved to 5pm-11pm"), bump `published_version`, audit. Shifts that ended before now are ignored for alerts. Every shift write bumps `schedules.version` for optimistic concurrency; `has_unpublished_changes` is computed from the draft-vs-snapshot diff. A republish whose snapshot would be identical is a no-op (`changed: false`). `employees_without_login` lists everyone with a shift in the published week who has no login.
 
-**Notifications** are in-app only. Clients poll `GET /v1/notifications?unread_only=true` every 60 s while visible and on focus. Kinds: `schedule_published`, `schedule_changed`, `time_off_decided`, `availability_decided` (to employees), `time_off_requested`, `availability_submitted` (to managers of the employee's locations).
+**Notifications** are in-app only. Clients poll `GET /v1/notifications` every 60 s while visible and on focus (the response carries `unread_count`). Kinds: `schedule_published`, `schedule_changed`, `time_off_decided`, `availability_decided` (to employees), `time_off_requested`, `availability_submitted`, `employee_deactivated` (to owners/admins and managers of the employee's locations). Each carries an in-app `link`.
 
 **Audit events** (`audit.record` in the same transaction; `details` holds before/after for updates): `employee.created|updated|merged|deactivated_by_pos`, `position.*`, `station.*`, `invitation.created|revoked|accepted`, `shift.created|updated|deleted`, `schedule.copied|published` (version, shift count, changed employee IDs), `time_off.requested|approved|denied|cancelled`, `availability.submitted|approved|rejected`. POS sync writes no per-row events (it already has `sync_runs`).
 
@@ -165,7 +171,7 @@ Why: it reuses cookie sessions, CSRF, `api.ts`, the query layer, types, and the 
 
 ### Seed
 
-`make demo` adds a manager (`gm@chefos.local`) and an employee login linked to imported "Maya Okafor" (`maya@chefos.local`), plus a published current week built from the simulator's shift pattern, so the walkthrough needs no manual setup.
+`make demo` adds a manager (`gm@chefos.local`, every location, no employee record) and an employee login linked to imported "Maya Okafor" (`maya@chefos.local`), both through the real invite-and-accept path and with the demo owner's password, plus a published current week built from the simulator's shift pattern, so the walkthrough needs no manual setup (`app/team/demo.py`, idempotent).
 
 ## Behavior
 
@@ -214,6 +220,17 @@ Why: it reuses cookie sessions, CSRF, `api.ts`, the query layer, types, and the 
 7. **Invitation tests:** single use, expiry, revoke, hashed token at rest, accept throttled like login, accept creates membership, `location_access`, and the employee link atomically.
 8. **Audit test:** each mutating route writes the expected `entity_type`/`action` in the same transaction (rollback leaves none).
 9. **Web:** `lint`, `typecheck`, `build` in CI. Manual walkthrough of the happy path at 390 px width (devtools device mode) and desktop, including the offline banner.
+
+## Implementation notes
+
+Decisions made while building, where the spec above was silent or ambiguous. The sections above were updated to match.
+
+- **Modules.** `app/team/` also has `invitations.py`, `schedule.py` (builder, projections, conflicts, copy, publish), `me.py`, `requests.py` (availability and time off, plus the builder's time-off and availability conflict checks, registered into `schedule.CONFLICT_HOOKS` so `schedule` never imports `requests`), and `demo.py`.
+- **Builder conflicts** for availability use the approved set in effect on the shift's business date and check every local calendar day the shift touches (an overnight shift can hit the next day's block). Time off is checked against the shift's actual interval in the location's zone. Pending availability doesn't flag shifts; pending time off does (`time_off_pending`).
+- **Request dates** are checked against today's business date at the employee's first location (org timezone if none). Time-off requests are capped at 62 days. Employees may cancel pending or approved time off that hasn't ended; cancelling doesn't notify managers (it is audited).
+- **Requests inbox** has `status=pending|history`. History is decided requests (and approved/rejected availability), newest first.
+- **Merge** also repoints shifts, published shifts, availability sets, and time-off requests.
+- **Web build in a git worktree.** Turbopack can't resolve `next` through a symlinked `node_modules`; use a real install in the worktree.
 
 ## Risks / open questions
 

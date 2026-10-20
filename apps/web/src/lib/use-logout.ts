@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { api } from "./api";
 import { useAuth } from "./auth";
+import { clearMyWeekCache } from "./offline";
 
 export function useLogout() {
   const router = useRouter();
@@ -16,6 +17,7 @@ export function useLogout() {
       // Cookie may already be gone; proceed to the login screen regardless.
     }
     setSession(null);
+    clearMyWeekCache();
     qc.clear();
     router.replace("/login");
   };

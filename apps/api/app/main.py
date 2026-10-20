@@ -20,6 +20,7 @@ from app.errors import install_error_handlers
 from app.identity import api as identity_api
 from app.integrations import api as integrations_api
 from app.sous import api as sous_api
+from app.team import api as team_api
 from app.telemetry import instrument_app, setup_telemetry
 from app.workflows import api as workflows_api
 
@@ -67,6 +68,7 @@ def create_app() -> FastAPI:
     app.include_router(integrations_api.router)
     app.include_router(commerce_api.router)
     app.include_router(sous_api.router)
+    app.include_router(team_api.router)
     app.include_router(workflows_api.router)
     # -------------------------------------------------------
 

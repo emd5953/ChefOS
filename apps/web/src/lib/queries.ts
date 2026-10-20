@@ -7,12 +7,21 @@ import type {
   Connection,
   ConnectionDetail,
   DailyResponse,
+  Employee,
+  Invitation,
   ItemsResponse,
   List,
   Location,
   MappingCandidate,
   MappingIssue,
+  MyAvailability,
+  NotificationList,
+  Position,
+  RequestsInbox,
+  ScheduleResponse,
   SousStatus,
+  Station,
+  TimeOff,
   SummaryResponse,
   TodayResponse,
 } from "./types";
@@ -31,6 +40,17 @@ export const keys = {
   daily: (loc: string, from: string, to: string) => ["daily", loc, from, to] as const,
   items: (loc: string, from: string, to: string) => ["items", loc, from, to] as const,
   sousStatus: ["sous-status"] as const,
+  employees: (loc: string, inactive: boolean) => ["team", "employees", loc, inactive] as const,
+  positions: (archived: boolean) => ["team", "positions", archived] as const,
+  stations: (loc: string) => ["team", "stations", loc] as const,
+  invitations: ["team", "invitations"] as const,
+  schedule: (loc: string, week: string) => ["team", "schedule", loc, week] as const,
+  team: ["team"] as const,
+  notifications: ["notifications"] as const,
+  myWeek: (week: string) => ["me", "week", week] as const,
+  myTimeOff: ["me", "time-off"] as const,
+  myAvailability: ["me", "availability"] as const,
+  requests: (loc: string, status: string) => ["team", "requests", loc, status] as const,
 };
 
 export function useLocations() {
@@ -157,5 +177,104 @@ export function useSousStatus() {
     queryFn: () => api<SousStatus>("/v1/sous/status"),
     retry: false,
     staleTime: 30_000,
+  });
+}
+
+// ---- Team ----
+
+export function useEmployees(locationId: string | undefined, includeInactive = false) {
+  return useQuery({
+    queryKey: keys.employees(locationId ?? "", includeInactive),
+    queryFn: async () =>
+      (
+        await api<List<Employee>>("/v1/team/employees", {
+          query: { location_id: locationId, include_inactive: includeInactive || undefined },
+        })
+      ).data,
+    enabled: !!locationId,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function usePositions(includeArchived = false) {
+  return useQuery({
+    queryKey: keys.positions(includeArchived),
+    queryFn: async () =>
+      (await api<List<Position>>("/v1/team/positions", { query: { include_archived: includeArchived || undefined } }))
+        .data,
+  });
+}
+
+export function useStations(locationId: string | undefined) {
+  return useQuery({
+    queryKey: keys.stations(locationId ?? ""),
+    queryFn: async () => (await api<List<Station>>("/v1/team/stations", { query: { location_id: locationId } })).data,
+    enabled: !!locationId,
+  });
+}
+
+export function useInvitations() {
+  return useQuery({
+    queryKey: keys.invitations,
+    queryFn: async () =>
+      (await api<List<Invitation>>("/v1/team/invitations", { query: { status: "pending" } })).data,
+  });
+}
+
+export function useSchedule(locationId: string | undefined, weekStart: string) {
+  return useQuery({
+    queryKey: keys.schedule(locationId ?? "", weekStart),
+    queryFn: () =>
+      api<ScheduleResponse>("/v1/team/schedule", { query: { location_id: locationId, week_start: weekStart } }),
+    enabled: !!locationId,
+    placeholderData: keepPreviousData,
+  });
+}
+
+// ---- Notifications ----
+
+/** Polls every 60 s while the tab is visible, and on focus (spec: no push delivery). */
+export function useNotifications(enabled = true) {
+  return useQuery({
+    queryKey: keys.notifications,
+    queryFn: () => api<NotificationList>("/v1/notifications"),
+    enabled,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+    retry: false,
+  });
+}
+
+/** Whether the signed-in user has an employee record (managers who also work shifts). */
+export function useHasEmployeeProfile(): boolean {
+  const q = useQuery({
+    queryKey: ["me", "profile"],
+    queryFn: () => api<unknown>("/v1/me/week"),
+    retry: false,
+    staleTime: 10 * 60_000,
+  });
+  return q.isSuccess;
+}
+
+// ---- Availability and time off ----
+
+export function useMyTimeOff() {
+  return useQuery({
+    queryKey: keys.myTimeOff,
+    queryFn: async () => (await api<List<TimeOff>>("/v1/me/time-off")).data,
+  });
+}
+
+export function useMyAvailability() {
+  return useQuery({ queryKey: keys.myAvailability, queryFn: () => api<MyAvailability>("/v1/me/availability") });
+}
+
+export function useRequestsInbox(locationId: string | undefined, status: "pending" | "history") {
+  return useQuery({
+    queryKey: keys.requests(locationId ?? "", status),
+    queryFn: () => api<RequestsInbox>("/v1/team/requests", { query: { location_id: locationId, status } }),
+    enabled: !!locationId,
+    refetchInterval: status === "pending" ? 60_000 : false,
   });
 }

@@ -10,7 +10,7 @@ import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
 import { api, errorMessage } from "@/lib/api";
-import { useAuth } from "@/lib/auth";
+import { homeFor, useAuth } from "@/lib/auth";
 import { applyApiErrors } from "@/lib/forms";
 import { keys } from "@/lib/queries";
 import type { Session } from "@/lib/types";
@@ -46,7 +46,7 @@ export function LoginForm() {
       });
       setSession(session);
       qc.setQueryData(keys.me, session);
-      router.push("/app");
+      router.push(homeFor(session.role));
     } catch (e) {
       if (!applyApiErrors(e, setError, ["email", "password"])) setFormError(errorMessage(e));
     }
@@ -94,6 +94,10 @@ export function LoginForm() {
         >
           owner@chefos.local / ChefOS-demo-2026! <span className="text-foreground/35">(click to fill)</span>
         </button>
+        <p className="mt-1">
+          Same password for the manager <span className="font-medium">gm@chefos.local</span> and the employee{" "}
+          <span className="font-medium">maya@chefos.local</span> (phone view).
+        </p>
       </div>
     </AuthShell>
   );

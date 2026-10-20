@@ -116,6 +116,19 @@ async def lookup_connection_owners(
     return [(r.connection_id, r.org_id) for r in rows]
 
 
+async def lookup_invitation(token_hash: str) -> tuple[uuid.UUID, uuid.UUID] | None:
+    """Resolve a live invitation token hash to (invitation_id, org_id) before any scope exists.
+    Calls a narrow SECURITY DEFINER function, like `lookup_connection_owners`."""
+    async with _sessionmaker()() as session, session.begin():
+        row = (
+            await session.execute(
+                text("SELECT invitation_id, org_id FROM invitation_for_token(:h)"),
+                {"h": token_hash},
+            )
+        ).first()
+    return (row.invitation_id, row.org_id) if row else None
+
+
 async def check_db() -> None:
     """Raises if the database is unreachable (used by /readyz)."""
     async with get_engine().connect() as conn:

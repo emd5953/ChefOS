@@ -16,7 +16,7 @@ from app.db import scoped_session
 from app.errors import ProblemError
 from app.identity.models import Location
 from app.integrations.providers.square.business_date import business_date
-from app.security.sessions import AuthContext, AuthDep
+from app.security.sessions import AuthContext, StaffDep
 from app.sous import fallback, orchestrator, prompt
 from app.sous.llm import LLMProvider, get_provider, sous_unavailable
 from app.sous.schemas import (
@@ -70,7 +70,7 @@ async def _location(ctx: AuthContext, location_id: uuid.UUID) -> Location:
 
 
 @router.post("/ask", response_model=SousAnswer)
-async def ask(ctx: AuthDep, body: AskIn, provider: Provider) -> SousAnswer:
+async def ask(ctx: StaffDep, body: AskIn, provider: Provider) -> SousAnswer:
     check_rate_limit(ctx.user_id)
     loc = await _location(ctx, body.location_id)
     return await orchestrator.ask(ctx, loc, body, provider)
@@ -104,7 +104,7 @@ async def _stream(events: AsyncIterator[SousEvent]) -> AsyncIterator[str]:
 
 
 @router.post("/ask/stream", response_class=StreamingResponse)
-async def ask_stream(ctx: AuthDep, body: AskIn, provider: Provider) -> StreamingResponse:
+async def ask_stream(ctx: StaffDep, body: AskIn, provider: Provider) -> StreamingResponse:
     """Server-sent events: status, tool, then answer or error (docs/specs/sous.md, v1.1)."""
     check_rate_limit(ctx.user_id)
     loc = await _location(ctx, body.location_id)
@@ -123,7 +123,7 @@ async def ask_stream(ctx: AuthDep, body: AskIn, provider: Provider) -> Streaming
 
 
 @router.get("/status", response_model=StatusOut)
-async def status(_: AuthDep, provider: Provider) -> StatusOut:
+async def status(_: StaffDep, provider: Provider) -> StatusOut:
     health = await provider.health()
     return StatusOut(
         provider=provider.name,

@@ -80,7 +80,7 @@ export type ApiOptions = {
   body?: unknown;
   query?: Record<string, string | number | boolean | null | undefined>;
   signal?: AbortSignal;
-  /** Redirect to /login on 401 when inside /app (default true). */
+  /** Redirect to /login on 401 when inside /app or /my (default true). */
   redirectOn401?: boolean;
 };
 
@@ -133,7 +133,7 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
     res.status === 401 &&
     opts.redirectOn401 !== false &&
     typeof window !== "undefined" &&
-    window.location.pathname.startsWith("/app")
+    (window.location.pathname.startsWith("/app") || window.location.pathname.startsWith("/my"))
   ) {
     setCsrfToken(null);
     // Deliberate hard navigation: outside React, and it drops all in-memory state.

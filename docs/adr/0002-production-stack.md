@@ -15,7 +15,7 @@ Build the product on a production-grade stack that runs entirely on a developer 
 | Layer | Choice | Local, free implementation |
 | --- | --- | --- |
 | Web | Next.js, React, TypeScript | `next dev` |
-| Mobile | React Native (Expo), TypeScript | Expo Go / simulator |
+| Mobile | React Native (Expo), TypeScript. **Amended by [ADR 0004](0004-mobile-as-responsive-web.md):** employee mobile (MOB-1) is a responsive web view in the web app; Expo is deferred | Expo Go / simulator |
 | API / domain | Python, FastAPI, Pydantic. Modular monolith by module: commerce, inventory, team, integrations, sous | `uvicorn` container |
 | Database | PostgreSQL with row-level security | `postgres` container |
 | Workflows | Temporal with Python workers | Temporal dev server container |

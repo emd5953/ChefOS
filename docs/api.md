@@ -1,7 +1,7 @@
 # API Reference (v1)
 
-**Status:** Contract for the demo build · **Last updated:** 2026-10-19
-**Related:** [Platform foundation](specs/platform-foundation.md), [Integration layer](specs/integration-layer.md)
+**Status:** Contract for the demo build · **Last updated:** 2026-10-20
+**Related:** [Platform foundation](specs/platform-foundation.md), [Integration layer](specs/integration-layer.md), [Team](specs/team.md)
 
 The browser reaches the API only through the Next.js origin: `http://localhost:3000/api/*` is rewritten to `http://localhost:8080/*`. All paths below are relative to the API root (e.g. `/v1/auth/me`; the browser calls `/api/v1/auth/me`).
 
@@ -19,7 +19,7 @@ The browser reaches the API only through the Next.js origin: `http://localhost:3
   "detail": "…", "request_id": "…", "errors": { "email": "Already registered" } }
 ```
 
-  `code` values: `validation_error`, `unauthenticated`, `session_expired`, `csrf_failed`, `forbidden`, `not_found`, `conflict`, `unavailable`, `internal_error`, `rate_limited`, `sous_unavailable`.
+  `code` values: `validation_error`, `unauthenticated`, `session_expired`, `csrf_failed`, `forbidden`, `not_found`, `conflict`, `unavailable`, `internal_error`, `rate_limited`, `sous_unavailable`, `pos_owned_field`, `invitation_invalid` (410), `email_has_account`, `shift_overlap`, `schedule_changed`, `conflicts_unacknowledged`.
 - Every response carries `X-Request-ID`.
 - Lists are `{ "data": [...] }`.
 
@@ -83,6 +83,8 @@ type Totals       = { net_sales: number; gross_sales: number; discounts: number;
 | GET | `/v1/auth/me` | none | `200 { user, org, role, csrf_token }` or `401` |
 
 Password minimum is 12 characters. `timezone` is an IANA name.
+
+**Roles.** `owner` and `admin` see everything. `manager` sees the locations in its `location_access`. `employee` sessions are limited to `/v1/auth/*`, `GET /v1/org`, `GET /v1/locations`, `/v1/me/*`, and `/v1/notifications`: every Commerce, Sous, Integrations, and `/v1/team/*` route returns `403 forbidden` for them. The web app sends employees to `/my`.
 
 ## Org and locations
 
@@ -160,6 +162,187 @@ Days with no data appear with zeros (the series is contiguous).
   by_hour: Array<{ hour: number /* 0-23 local */; net_sales: number; orders: number }>;
   freshness: Freshness[] }
 ```
+
+## Team
+
+Design: [Team spec](specs/team.md). Every `/v1/team/*` route requires owner, admin, or manager; an `employee` session gets `403 forbidden`. Owners and admins manage every location; a manager manages the locations in their `location_access` and the employees assigned to them. Anything outside that scope, or in another org, is `404`. Every mutation writes an audit event in the same transaction.
+
+```ts
+type Position = { id: string; name: string; color: string /* #rrggbb */; archived_at: string | null }
+type Station  = { id: string; location_id: string; name: string; archived_at: string | null }
+type Employee = { id: string; display_name: string; email: string | null; phone: string | null;
+                  source: "square" | "manual"; active: boolean; job_title: string | null;
+                  pos_hourly_rate: number | null;     // cents, synced from the POS (read-only)
+                  rate_override: number | null;       // cents, team-owned
+                  effective_rate: number | null;      // rate_override ?? pos_hourly_rate; null = "no rate"
+                  currency: "USD";
+                  positions: Array<{ id: string; name: string; color: string; is_primary: boolean }>;
+                  location_ids: string[]; login: "none" | "invited" | "active";
+                  merged_into_id: string | null; updated_at: string }
+type PositionRef = { position_id: string; is_primary?: boolean }   // first one is primary unless one is marked
+```
+
+### Employees
+
+| Method | Path | Body | Response |
+| --- | --- | --- | --- |
+| GET | `/v1/team/employees?location_id&include_inactive` | none | `200 { data: Employee[] }`. Without `location_id`, every employee the caller manages |
+| POST | `/v1/team/employees` | `{ display_name, email?, phone?, location_ids, positions?: PositionRef[], rate_override? }` | `201 Employee` (`source: "manual"`) |
+| PATCH | `/v1/team/employees/{id}` | any of `{ email, phone, rate_override, location_ids, positions }`; manual employees also `{ display_name, active }` | `200 Employee` |
+| POST | `/v1/team/employees/{id}/merge` | `{ into_id }` | `200 Employee` (the survivor). Owner/admin only |
+
+- **Field ownership.** For Square employees, `display_name`, `active`, `job_title`, and `hourly_rate` are synced and read-only: sending any of them is `422 pos_owned_field` with that field in `errors`. Sync never changes team-owned fields.
+- **Locations.** A manager's `location_ids` edit only touches locations they can access; the employee's other locations are kept.
+- **Merge** (`{id}` into `into_id`) repoints external refs, timecards, and later shifts and requests, moves the login, unions positions and locations, then sets `{id}` inactive with `merged_into_id`. If `{id}` came from Square, the survivor becomes POS-linked. `409` if both have logins or either was already merged.
+- **POS import.** After each team member sync, empty emails are filled from Square, assigned linked locations are added (never removed; "all locations" means every linked location), and each job title becomes a position, set as primary on employees that have no positions.
+
+### Invitations
+
+Logins are created only by accepting an invitation. Links are shared by hand (no email delivery). Tokens are 256-bit, stored as SHA-256, valid 7 days, single use.
+
+```ts
+type Invitation = { id: string; email: string; role: "manager" | "employee";
+                    employee_id: string | null; employee_name: string | null; location_ids: string[];
+                    status: "pending" | "accepted" | "revoked" | "expired";
+                    created_at: string; expires_at: string; accepted_at: string | null }
+```
+
+| Method | Path | Body | Response |
+| --- | --- | --- | --- |
+| POST | `/v1/team/invitations` | `{ employee_id?, email?, role: "employee" \| "manager", location_ids }` | `201 { invitation, accept_url }`. `accept_url` (`{WEB_ORIGIN}/invite/{token}`) is shown once |
+| GET | `/v1/team/invitations?status=pending\|accepted\|revoked\|expired` | none | `200 { data: Invitation[] }` (newest first) |
+| POST | `/v1/team/invitations/{id}/revoke` | none | `200 Invitation`. `409` if already accepted |
+| GET | `/v1/invitations/{token}` | none (no auth) | `200 { org_name, email, role, employee_name, expires_at }` or `410 invitation_invalid` |
+| POST | `/v1/invitations/{token}/accept` | `{ display_name, password }` (no auth, no CSRF) | `201 { user, org, role, csrf_token }` + session cookie |
+
+- `email` defaults to the employee's email; without `employee_id` it is required (a manager who isn't on the schedule). A new invitation for the same employee (or email) revokes the pending one.
+- Managers may invite only `role: "employee"` and only to their locations; `employee_id` must be active and without a login (`409`).
+- Accepting creates the user, the membership with the invited role, `location_access` for the invited locations, and the employee link, in one transaction with a session. `410 invitation_invalid` for expired, revoked, or used tokens; `409 email_has_account` if the email already has a ChefOS login (users belong to one org in v1); `422` for a weak password. Invalid tokens count against the same per-IP limit as failed logins (`429`).
+
+### Schedule
+
+Weeks run Monday to Sunday (`week_start` must be a Monday, else `422`). Shift times are ISO 8601 with an offset; the API derives `business_date` from the location's timezone and business-day start (a 01:00 start belongs to the previous date). Managers edit a draft; employees see only what is published.
+
+```ts
+type Shift = { id: string; location_id: string; employee_id: string | null; position_id: string;
+               station_id: string | null; business_date: string; starts_at: string; ends_at: string;
+               break_minutes: number; notes: string;
+               paid_hours: number;          // (ends_at − starts_at) − break, so DST days are right
+               cost: number | null;         // cents; null without an effective rate or employee
+               updated_at: string }
+type ShiftIn = { employee_id?: string | null; position_id: string; station_id?: string | null;
+                 starts_at: string; ends_at: string; break_minutes?: number; notes?: string }
+type Conflict = { shift_id: string; detail: string;
+                  kind: "overlap" | "time_off_approved" | "time_off_pending" | "unavailable" |
+                        "inactive_employee" | "not_assigned_to_location" | "unassigned" }
+type DayTotals = { business_date: string; scheduled_hours: number; projected_cost: number;
+                   unrated_shifts: number; forecast_sales: number | null;
+                   forecast_basis: string[];   // the dates the median used
+                   forecast_reason: "not_connected" | "not_enough_history" | null;
+                   projected_labor_pct: number | null }
+```
+
+| Method | Path | Body | Response |
+| --- | --- | --- | --- |
+| GET | `/v1/team/schedule?location_id&week_start` | none | `200 Schedule` (below) |
+| POST | `/v1/team/schedule/shifts?location_id&week_start` | `ShiftIn` | `201 Shift` |
+| PATCH | `/v1/team/shifts/{id}` | partial `ShiftIn` + `expected_updated_at` (required) | `200 Shift`. `409` if the shift changed since `expected_updated_at` |
+| DELETE | `/v1/team/shifts/{id}` | none | `204` |
+| POST | `/v1/team/schedule/copy?location_id&week_start` | `{ from_week_start }` | `200 { copied, unassigned }`. `409` if the target week has shifts |
+| POST | `/v1/team/schedule/publish?location_id&week_start` | `{ expected_version, acknowledge_conflicts? }` | `200 { published_version, changed, changed_employees: string[], notified_users, employees_without_login: [{ id, display_name }] }` |
+
+```ts
+type Schedule = {
+  location_id: string; timezone: string; currency: "USD";
+  schedule: { id: string | null; week_start: string; version: number; published_version: number | null;
+              published_at: string | null; has_unpublished_changes: boolean;
+              unpublished_changes: number /* shifts added, removed, or changed since the last publish */ };
+  shifts: Shift[];
+  employees: Array<{ id: string; display_name: string; active: boolean; primary_position_id: string | null;
+                     position_ids: string[]; has_rate: boolean; assigned: boolean /* works at this location */ }>;
+  days: DayTotals[];                                       // 7, Monday first
+  week: Omit<DayTotals, "business_date" | "forecast_basis" | "forecast_reason"> &
+        { reference_labor_pct: number | null;              // actual labor % over the last 28 days
+          reference_period: { from: string; to: string } };
+  conflicts: Conflict[];
+  freshness: Freshness[] }                                 // the orders stream
+```
+
+- **Validation (422):** end after start, at least 15 minutes, at most 16 hours, break shorter than the shift, business date inside the week, an active employee, a non-archived position, a station of this location. Crossing midnight is allowed.
+- **Overlap:** the same employee on two overlapping shifts at any location is `409 shift_overlap`, naming the other shift. Other conflicts never block a write; they are listed per shift on read.
+- **Forecast:** median net sales (all channels) of the last 4 same-weekday business dates before min(date, today). Days after the location's first sales day with no sales count as 0 (closed). Fewer than 2 dates with history: `null`, `not_enough_history`; no POS: `null`, `not_connected`. Labor % = projected cost ÷ forecast. The week has a forecast only if every day has one.
+- **Publish** runs in one transaction: lock the schedule, check `expected_version` (`409 schedule_changed` if stale; refetch), copy the draft into the published snapshot, and alert only employees whose published shifts were added, removed, moved, or reassigned (shifts that already ended are ignored). The first publish of a week sends `schedule_published`; later ones send `schedule_changed` with a summary ("Fri moved to 5pm-11pm"). Overlaps block publishing (`409 shift_overlap`); any other conflict needs `acknowledge_conflicts: true` (`409 conflicts_unacknowledged`). Republishing an unchanged week is a no-op (`changed: false`, no alerts). Employees without a login are published but listed in `employees_without_login`.
+- **Copy** keeps local wall-clock times (DST-safe). Inactive employees, and employees who already work elsewhere at the copied time, are copied as unassigned.
+
+### Requests inbox (managers)
+
+| Method | Path | Body | Response |
+| --- | --- | --- | --- |
+| GET | `/v1/team/requests?location_id&status=pending\|history` | none | `200 { time_off: TimeOff[], availability: Availability[] }` for employees the caller manages (at `location_id` if given). Pending oldest first; history (decided) newest first |
+| POST | `/v1/team/time-off/{id}/decide` | `{ decision: "approve" \| "deny", note? }` | `200 TimeOff`. `409` if not pending |
+| POST | `/v1/team/availability/{id}/decide` | `{ decision: "approve" \| "reject", note? }` | `200 Availability`. `409` if not pending |
+
+Each pending time-off item lists the published shifts it overlaps (`overlapping_shifts`). Approving never deletes shifts: the builder flags them (`time_off_approved`; `time_off_pending` while undecided; `unavailable` against the employee's approved availability). Decisions notify the employee.
+
+### Positions and stations
+
+| Method | Path | Body | Response |
+| --- | --- | --- | --- |
+| GET | `/v1/team/positions?include_archived` | none | `200 { data: Position[] }` |
+| POST | `/v1/team/positions` | `{ name, color? }` | `201 Position`. `409` if the name exists (ignoring case) |
+| PATCH | `/v1/team/positions/{id}` | `{ name?, color?, archived? }` | `200 Position` |
+| GET | `/v1/team/stations?location_id&include_archived` | none | `200 { data: Station[] }` |
+| POST | `/v1/team/stations` | `{ location_id, name }` | `201 Station` |
+| PATCH | `/v1/team/stations/{id}` | `{ name?, archived? }` | `200 Station` |
+
+## Employee self-service and notifications
+
+Any signed-in role. `/v1/me/*` resolves the employee from the session's user (never a parameter); `404` if the login has no employee record. Responses never include rates or costs.
+
+| Method | Path | Body | Response |
+| --- | --- | --- | --- |
+| GET | `/v1/me/week?week_start` | none | `200 MyWeek`. `week_start` defaults to the current week at the employee's location |
+| GET | `/v1/notifications?unread_only` | none | `200 { data: Notification[] /* newest 50 */, unread_count }` |
+| POST | `/v1/notifications/read` | `{ ids?: string[], all?: boolean }` | `200 { unread_count }`. Only the caller's own notifications |
+| GET | `/v1/me/availability` | none | `200 { current: Availability \| null, pending: Availability \| null, upcoming: Availability[] }` |
+| PUT | `/v1/me/availability` | `{ effective_from, blocks: Block[], note? }` | `200 Availability` (`pending`; replaces a pending one, which becomes `superseded`). `effective_from` today or later |
+| GET | `/v1/me/time-off` | none | `200 { data: TimeOff[] }` (own requests, newest first) |
+| POST | `/v1/me/time-off` | `{ starts_on, ends_on, start_time?, end_time?, reason? }` | `201 TimeOff`. `422` if it starts in the past or `ends_on < starts_on` |
+| POST | `/v1/me/time-off/{id}/cancel` | none | `200 TimeOff`. Pending or approved and not over; another employee's id is `404` |
+
+```ts
+type MyWeek = { week_start: string; employee: { id: string; display_name: string };
+                published_at: string | null;              // null: nothing published for this week yet
+                locations: Array<{ id: string; name: string; timezone: string }>;
+                my_shifts: Array<{ id: string; location_id: string; business_date: string; starts_at: string;
+                                   ends_at: string; break_minutes: number; position_name: string;
+                                   position_color: string; station_name: string | null; notes: string }>;
+                team_shifts: Array<{ location_id: string; business_date: string; starts_at: string; ends_at: string;
+                                     employee_name: string; position_name: string; position_color: string }> }
+type Notification = { id: string; kind: "schedule_published" | "schedule_changed" | "time_off_decided" |
+                        "availability_decided" | "time_off_requested" | "availability_submitted" |
+                        "employee_deactivated";
+                      title: string; body: string; link: string | null /* in-app path */;
+                      entity_type: string | null; entity_id: string | null;
+                      created_at: string; read_at: string | null }
+```
+
+```ts
+type Block = { weekday: number /* 0 = Monday */; start_time: string | null; end_time: string | null }  // unavailable; no times = all day
+type Availability = { id: string; employee_id: string; employee_name: string | null;
+                      status: "pending" | "approved" | "rejected" | "superseded"; effective_from: string;
+                      note: string; blocks: Block[]; submitted_at: string; decided_at: string | null;
+                      decision_note: string | null }
+type TimeOff = { id: string; employee_id: string; employee_name: string | null; starts_on: string; ends_on: string;
+                 start_time: string | null /* on the first day */; end_time: string | null /* on the last day */;
+                 reason: string; status: "pending" | "approved" | "denied" | "cancelled"; created_at: string;
+                 decided_at: string | null; decision_note: string | null;
+                 overlapping_shifts: Array<{ id; location_id; business_date; starts_at; ends_at; position_name }> }
+```
+
+Times on requests are location-local wall clock (`HH:MM`). The approved availability with the latest `effective_from` on or before a date applies to that date. Submitting availability or time off notifies the employee's managers (owners/admins and managers of their locations).
+
+`MyWeek` reads only the published snapshot: draft edits are invisible until the next publish. Notifications are in-app only; clients poll every 60 s while visible and on focus.
 
 ## Sous
 

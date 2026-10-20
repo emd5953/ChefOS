@@ -17,7 +17,7 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.commerce.models import MenuItem, MenuItemVariant, StaffMember
+from app.commerce.models import MenuItem, MenuItemVariant
 from app.config import get_settings
 from app.db import lookup_connection_owners, scoped_session
 from app.errors import ProblemError, not_found, validation_error
@@ -46,6 +46,7 @@ from app.integrations.schemas import (
     SyncRunOut,
 )
 from app.integrations.secrets import encrypt_credentials
+from app.team.models import StaffMember
 
 log = structlog.get_logger()
 PROVIDER = "square"

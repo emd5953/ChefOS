@@ -1,7 +1,7 @@
 # Architecture
 
-**Status:** Draft · **Last updated:** 2026-10-19
-**Related:** [PRD](prd.md), [ADR 0002: Production stack](adr/0002-production-stack.md), [Integration layer](specs/integration-layer.md), [Sous](specs/sous.md)
+**Status:** Draft · **Last updated:** 2026-10-20
+**Related:** [PRD](prd.md), [ADR 0002: Production stack](adr/0002-production-stack.md), [ADR 0004: Mobile as a responsive web view](adr/0004-mobile-as-responsive-web.md), [Integration layer](specs/integration-layer.md), [Sous](specs/sous.md)
 
 ## Overview
 
@@ -19,7 +19,7 @@ flowchart LR
 
     subgraph Clients
       WEB[Web app - Next.js]
-      MOB[Mobile app - React Native]
+      MOB[Employee mobile view - /my in the web app]
     end
 
     subgraph Platform
@@ -89,7 +89,8 @@ Conventions:
 - Scope is derived from the authenticated session or API key on every request. It is never accepted from request bodies or model output.
 - Enforcement happens twice: in the service layer (explicit scope parameters on every query) and in PostgreSQL row-level security keyed on a per-transaction `app.org_id` setting.
 - Background jobs carry org scope in their workflow input and set it on every DB transaction.
-- Web sessions use HttpOnly SameSite cookies plus CSRF tokens. Mobile uses short-lived access tokens plus refresh tokens. Integrations use scoped API keys (hashed at rest, shown once).
+- Web sessions use HttpOnly SameSite cookies plus CSRF tokens. The employee mobile view is part of the web app and uses the same sessions ([ADR 0004](adr/0004-mobile-as-responsive-web.md)); a native client would add short-lived access tokens plus refresh tokens. Integrations use scoped API keys (hashed at rest, shown once).
+- Roles: `owner`/`admin` see every location, `manager` the locations in `location_access`, `employee` only `/v1/me/*`, notifications, and the published team schedule (Commerce, Sous, Integrations, and Team management return 403).
 
 ## Tech stack
 
@@ -98,7 +99,7 @@ See [ADR 0002](adr/0002-production-stack.md) for the decision and rationale.
 | Layer | Technology | Local runtime |
 | --- | --- | --- |
 | Web | Next.js, React, TypeScript | `next dev` |
-| Mobile | React Native (Expo), TypeScript | Expo Go / simulator |
+| Mobile | Employee view in the web app (`/my`), home-screen installable ([ADR 0004](adr/0004-mobile-as-responsive-web.md)). Expo deferred | `next dev` |
 | API | Python, FastAPI, Pydantic | `uvicorn` container |
 | Database | PostgreSQL (RLS enabled) | `postgres` container |
 | Workflows | Temporal, Python workers | Temporal dev server container |
@@ -122,7 +123,7 @@ Target (created in Phase 0):
 ```
 apps/api/        FastAPI service and Temporal workers
 apps/web/        Next.js app (workspace + marketing site)
-apps/mobile/     Expo app
+apps/mobile/     Expo app (deferred by ADR 0004; MOB-1 is /my in apps/web)
 infra/           docker-compose.yml, OTel collector config, seed scripts
 docs/
 ```
@@ -132,7 +133,7 @@ Current:
 | Path | What it is |
 | --- | --- |
 | `apps/api/` | FastAPI service and Temporal workers |
-| `apps/web/` | Next.js app (workspace) plus `public/`, the static marketing site served through rewrites in `next.config.ts` |
+| `apps/web/` | Next.js app: manager workspace (`/app`), employee mobile view (`/my`), and `public/`, the static marketing site served through rewrites in `next.config.ts` |
 | `infra/` | `docker-compose.yml`, OTel collector config, seed scripts |
 | `docs/` | Product and engineering documentation |
 

@@ -313,6 +313,8 @@ def normalize_team_member(obj: Mapping[str, Any]) -> CanonicalStaff:
     job = jobs[0] if jobs else {}
     rate = job.get("hourly_rate")
     updated = obj.get("updated_at")
+    assigned = obj.get("assigned_locations") or {}
+    email = str(obj.get("email_address") or "").strip().lower()
     return CanonicalStaff(
         external_id=str(obj["id"]),
         given_name=obj.get("given_name"),
@@ -321,6 +323,12 @@ def normalize_team_member(obj: Mapping[str, Any]) -> CanonicalStaff:
         job_title=job.get("job_title"),
         hourly_rate_cents=_money(rate) if rate else None,
         source_updated_at=parse_ts(updated) if updated else None,
+        email=email or None,
+        assigned_location_ids=(
+            None
+            if assigned.get("assignment_type") == "ALL_CURRENT_LOCATIONS"
+            else tuple(str(i) for i in assigned.get("location_ids") or ())
+        ),
     )
 
 

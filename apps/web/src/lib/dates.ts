@@ -107,3 +107,51 @@ export const US_TIMEZONES: Array<{ value: string; label: string }> = [
   { value: "America/Anchorage", label: "Alaska (Anchorage)" },
   { value: "Pacific/Honolulu", label: "Hawaii (Honolulu)" },
 ];
+
+/** Monday of the week containing `date` (weeks run Monday to Sunday). */
+export function mondayOf(date: string): string {
+  const dow = new Date(parse(date)).getUTCDay(); // 0 = Sunday
+  return addDays(date, -((dow + 6) % 7));
+}
+
+/** Wall-clock parts of an instant in an IANA zone. */
+function zonedParts(ms: number, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).formatToParts(new Date(ms));
+  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? 0);
+  return { y: get("year"), m: get("month"), d: get("day"), h: get("hour") % 24, mi: get("minute") };
+}
+
+/**
+ * The UTC ISO instant for a wall-clock date and "HH:MM" in an IANA zone (DST-aware: the
+ * offset is resolved for that date, two passes so times near a change land right).
+ */
+export function zonedIso(date: string, hhmm: string, timeZone: string): string {
+  const [y = 1970, m = 1, d = 1] = date.split("-").map(Number);
+  const [h = 0, mi = 0] = hhmm.split(":").map(Number);
+  const wall = Date.UTC(y, m - 1, d, h, mi);
+  let guess = wall;
+  for (let i = 0; i < 2; i++) {
+    const p = zonedParts(guess, timeZone);
+    const shown = Date.UTC(p.y, p.m - 1, p.d, p.h, p.mi);
+    guess += wall - shown;
+  }
+  return new Date(guess).toISOString();
+}
+
+/** "HH:MM" and "YYYY-MM-DD" of an instant in a zone. */
+export function zonedTime(iso: string, timeZone: string): string {
+  const p = zonedParts(new Date(iso).getTime(), timeZone);
+  return `${String(p.h).padStart(2, "0")}:${String(p.mi).padStart(2, "0")}`;
+}
+export function zonedDate(iso: string, timeZone: string): string {
+  const p = zonedParts(new Date(iso).getTime(), timeZone);
+  return `${p.y}-${String(p.m).padStart(2, "0")}-${String(p.d).padStart(2, "0")}`;
+}

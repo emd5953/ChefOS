@@ -2,8 +2,10 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Menu as MenuIcon } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { Brand } from "@/components/brand";
+import { Bell } from "@/components/notifications/bell";
 import { Drawer } from "@/components/ui/dialog";
 import { ErrorState } from "@/components/ui/states";
 import { api } from "@/lib/api";
@@ -23,9 +25,15 @@ export function AppShell({ children }: { children: ReactNode }) {
     retry: false,
   });
 
+  const router = useRouter();
+  const isEmployee = me.data?.role === "employee";
   useEffect(() => {
     if (me.data) setSession(me.data);
   }, [me.data, setSession]);
+  // Employees have no manager screens: the workspace sends them to their phone view.
+  useEffect(() => {
+    if (isEmployee) router.replace("/my");
+  }, [isEmployee, router]);
 
   if (me.isError) {
     return (
@@ -34,7 +42,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </div>
     );
   }
-  if (!me.data || !session) return <ShellSkeleton />;
+  if (!me.data || !session || isEmployee) return <ShellSkeleton />;
 
   return (
     <LocationScopeProvider>
@@ -62,6 +70,8 @@ function Frame({ children }: { children: ReactNode }) {
           <MenuIcon className="size-5" aria-hidden />
         </button>
         <Brand />
+        <span className="flex-1" />
+        <Bell />
       </header>
       <Drawer open={open} onOpenChange={setOpen} title="Navigation">
         <Sidebar onNavigate={() => setOpen(false)} />

@@ -235,3 +235,13 @@ def test_catalog_and_team_normalization() -> None:
     })  # fmt: skip
     assert (staff.status, staff.job_title, staff.hourly_rate_cents) == ("inactive", "Server", 1700)
     assert staff.source_updated_at == datetime.fromisoformat("2026-01-01T00:00:00+00:00")
+    assert (staff.email, staff.assigned_location_ids) == (None, ())
+    staff = normalize_team_member({
+        "id": "TM2", "email_address": " Ana@Example.com ",
+        "assigned_locations": {"assignment_type": "EXPLICIT_LOCATIONS", "location_ids": ["L1", "L2"]},
+    })  # fmt: skip
+    assert (staff.email, staff.assigned_location_ids) == ("ana@example.com", ("L1", "L2"))
+    staff = normalize_team_member(
+        {"id": "TM3", "assigned_locations": {"assignment_type": "ALL_CURRENT_LOCATIONS"}}
+    )
+    assert staff.assigned_location_ids is None  # every linked location
