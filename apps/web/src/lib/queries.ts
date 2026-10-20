@@ -1,6 +1,6 @@
 "use client";
 
-import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "./api";
 import type {
   CompareMode,
@@ -12,8 +12,6 @@ import type {
   Location,
   MappingCandidate,
   MappingIssue,
-  SousAnswer,
-  SousAskInput,
   SousStatus,
   SummaryResponse,
   TodayResponse,
@@ -159,11 +157,5 @@ export function useSousStatus() {
     queryFn: () => api<SousStatus>("/v1/sous/status"),
     retry: false,
     staleTime: 30_000,
-  });
-}
-
-export function useAskSous() {
-  return useMutation({
-    mutationFn: (input: SousAskInput) => api<SousAnswer>("/v1/sous/ask", { method: "POST", body: input }),
   });
 }

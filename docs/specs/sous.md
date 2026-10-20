@@ -209,3 +209,60 @@ Config:
   - authorization violations
   - p50/p95 latency
 - CI runs the deterministic tests (tools, validator, scope, prompt injection) with `FakeProvider`. The model eval runs locally, because the model doesn't run on CI.
+
+## v1.1: streaming, short sessions, circuit breaker, fallback
+
+**Status:** In progress · 2026-10-20
+
+### Short database sessions
+
+- Before: `/ask` held one request-scoped transaction (`OrgSession`) open for the whole question, up to 4 model rounds of up to 90 s each. The default pool is 5 connections plus 10 overflow, so about 15 concurrent questions would take every connection, and dashboards would wait 30 s for one and then fail.
+- After: the API authorizes the location in a short session and closes it. Each tool call opens its own `scoped_session(org_id)` and closes it when the call returns. No connection is held while the model is thinking.
+- The orchestrator takes an `open_session` factory instead of a session:
+
+```
+orchestrator.events(ctx, loc, req, provider, now=None, *, open_session=None) -> AsyncIterator[SousEvent]
+orchestrator.ask(ctx, loc, req, provider, now=None, *, open_session=None) -> SousAnswer   # drains events()
+```
+
+`open_session` defaults to `lambda: scoped_session(ctx.org_id)`.
+
+### Streaming
+
+`POST /v1/sous/ask/stream` takes the same body as `/ask` and returns `text/event-stream`. Auth, CSRF, location scope, the rate limit and an open breaker with no fallback all fail before the stream starts, as ordinary problem+json responses. Once the stream starts, the server sends these events:
+
+```
+event: status   data: { "label": str }                         # "Thinking", "Double-checking the numbers"
+event: tool     data: { "name", "args", "ms", "ok", "label" }  # after each tool call; label e.g. "Checked sales for Oct 12 – Oct 18"
+event: answer   data: SousAnswer                               # always last on success
+event: error    data: { "status": int, "code": str, "detail": str }  # always last on failure
+: ping                                                         # SSE comment every 10 s while waiting on the model
+```
+
+- **Why not stream tokens:** the answer text isn't streamed token by token, because it has to pass the grounding check before anyone sees it. The steps are what streams.
+- **Headers:** `Cache-Control: no-cache, no-transform` and `X-Accel-Buffering: no`. `no-transform` matters: without it, gzip in a proxy (including Next's dev rewrite) buffers the whole stream.
+- **Disconnects:** a client disconnect cancels the in-flight model call.
+- **Non-streaming endpoint:** `/ask` stays for the evals and for clients that don't stream.
+
+### Circuit breaker
+
+- **Scope:** one breaker per API process, around `OllamaProvider.chat`.
+- **States:**
+  - **Closed** while calls succeed.
+  - **Open** after 3 consecutive failures (connection error, timeout, 5xx, bad payload). For the next 30 s, calls fail immediately with `sous_unavailable` instead of waiting for a timeout.
+  - **Half-open** after those 30 s: exactly one trial call is let through. Success closes the breaker, failure reopens it.
+- **Fast connect timeout:** connecting to the model times out after 3 s, separately from the 90 s read timeout.
+- **Status endpoint:** `GET /v1/sous/status` adds `breaker: "closed" | "open" | "half_open"`.
+
+### Fallback
+
+- **When it runs:** only if the model is unavailable, meaning the breaker is open or the call fails.
+- **What it does:** a deterministic matcher reads the question for one metric (net sales, orders, average check, labor %) and one named period (today, yesterday, this week, last week, this month, last month, last 7 days, last 30 days). It also detects an optional comparison ("vs", "compared", "week before" → previous period; "last year" → previous year).
+- **On a match:** it runs the same tool and fills in a fixed template, using the exact numbers from the tool results.
+- **No match:** returns the usual 503 `sous_unavailable`, or an `error` event on the stream.
+- **Follow-ups:** questions that rely on history ("and the week before?") never match.
+- **Response:** `SousAnswer` gains `mode: "model" | "fallback"`. A fallback answer has `kind: "answer"`, `model: "fallback"`, and the limitation "The assistant model is unavailable, so this is a fixed-format answer from the same figures."
+
+### Known limits (unchanged)
+
+The rate limit and the breaker are per-process memory. With more than one API process, each one counts on its own, so they move to Postgres or Redis before that happens.

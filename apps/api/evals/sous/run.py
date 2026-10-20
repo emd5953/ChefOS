@@ -448,8 +448,7 @@ async def run_case(case: dict[str, Any], env: Env, provider: Any, now: datetime)
     req = AskIn(question=question, location_id=env.loc.id, history=case.get("history", []))
     started = time.perf_counter()
     try:
-        async with env() as db:
-            answer = await ask(db, env.ctx, env.loc, req, provider, now=now)
+        answer = await ask(env.ctx, env.loc, req, provider, now=now, open_session=env)
     except Exception as exc:
         res.ms = round((time.perf_counter() - started) * 1000)
         if is_unavailable(exc):

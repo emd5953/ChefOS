@@ -46,8 +46,9 @@ async def test_ask_returns_the_sous_answer_shape(
     out = r.json()
     assert set(out) == {
         "kind", "answer", "period", "evidence", "limitations", "tools_used", "model",
-        "prompt_version", "request_id",
+        "prompt_version", "request_id", "mode",
     }  # fmt: skip
+    assert out["mode"] == "model"
     assert out["kind"] == "clarify" and out["answer"] == "Which week do you mean?"
     assert out["period"] is None and out["evidence"] == [] and out["tools_used"] == []
     assert out["prompt_version"] == prompt.PROMPT_VERSION
@@ -223,6 +224,7 @@ async def test_unreachable_ollama_is_503_sous_unavailable(
         "available": False,
         "model_pulled": False,
         "prompt_version": prompt.PROMPT_VERSION,
+        "breaker": "closed",  # one failure doesn't open it
     }
 
 
@@ -235,6 +237,7 @@ async def test_status_with_the_fake_provider(bare: Connected, use_provider: UseP
         "available": True,
         "model_pulled": True,
         "prompt_version": prompt.PROMPT_VERSION,
+        "breaker": "closed",
     }
 
 

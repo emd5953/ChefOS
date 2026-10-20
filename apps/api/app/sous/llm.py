@@ -2,6 +2,8 @@
 
 import copy
 import json
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
@@ -10,6 +12,7 @@ import structlog
 
 from app.config import get_settings
 from app.errors import ProblemError
+from app.sous.schemas import BreakerState
 
 log = structlog.get_logger()
 
@@ -37,6 +40,7 @@ class ProviderHealth:
 class LLMProvider(Protocol):
     name: Literal["ollama", "fake"]
     model: str
+    breaker: CircuitBreaker | None
 
     async def chat(self, messages: list[Message], tools: list[dict[str, Any]]) -> LLMReply: ...
 
@@ -52,15 +56,95 @@ def sous_unavailable() -> ProblemError:
     )
 
 
+class CircuitBreaker:
+    """Fail fast while the model is down instead of making every question wait for a timeout.
+
+    closed -> open after `threshold` consecutive failures; open -> half_open after `cooldown`
+    seconds, which lets exactly one trial call through; its result closes or reopens the breaker.
+    State is per process (see docs/specs/sous.md, v1.1).
+    """
+
+    def __init__(
+        self,
+        threshold: int = 3,
+        cooldown: float = 30.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.threshold = threshold
+        self.cooldown = cooldown
+        self._clock = clock
+        self._failures = 0
+        self._opened_at: float | None = None
+        self._trial_in_flight = False
+
+    @property
+    def state(self) -> BreakerState:
+        if self._opened_at is None:
+            return "closed"
+        if self._clock() - self._opened_at >= self.cooldown:
+            return "half_open"
+        return "open"
+
+    def allow(self) -> bool:
+        """Whether a call may go out now. In half_open, only the first caller gets through."""
+        state = self.state
+        if state == "closed":
+            return True
+        if state == "half_open" and not self._trial_in_flight:
+            self._trial_in_flight = True
+            return True
+        return False
+
+    def record_success(self) -> None:
+        self._failures = 0
+        self._opened_at = None
+        self._trial_in_flight = False
+
+    def record_failure(self) -> None:
+        self._failures += 1
+        if self._trial_in_flight or self._failures >= self.threshold:
+            self._opened_at = self._clock()
+        self._trial_in_flight = False
+
+    def release(self) -> None:
+        """A call ended with no verdict (cancelled): free the half-open trial slot."""
+        self._trial_in_flight = False
+
+    def reset(self) -> None:
+        self.record_success()
+
+
+BREAKER = CircuitBreaker()
+
+
 class OllamaProvider:
     name: Literal["ollama", "fake"] = "ollama"
 
-    def __init__(self, url: str, model: str, timeout: float) -> None:
+    def __init__(
+        self, url: str, model: str, timeout: float, breaker: CircuitBreaker | None = None
+    ) -> None:
         self.url = url.rstrip("/")
         self.model = model
         self.timeout = timeout
+        self.breaker: CircuitBreaker | None = breaker or BREAKER
 
     async def chat(self, messages: list[Message], tools: list[dict[str, Any]]) -> LLMReply:
+        breaker = self.breaker or BREAKER
+        if not breaker.allow():
+            raise sous_unavailable()
+        try:
+            reply = await self._chat(messages, tools)
+        except ProblemError:
+            breaker.record_failure()
+            raise
+        except BaseException:
+            # Cancelled (the client went away): no verdict on the model, free the trial slot.
+            breaker.release()
+            raise
+        breaker.record_success()
+        return reply
+
+    async def _chat(self, messages: list[Message], tools: list[dict[str, Any]]) -> LLMReply:
         body = {
             "model": self.model,
             "messages": messages,
@@ -70,7 +154,9 @@ class OllamaProvider:
             "options": {"temperature": 0},
         }
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            # Connecting fails fast; a slow model gets the full read timeout.
+            timeout = httpx.Timeout(self.timeout, connect=3.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 r = await client.post(f"{self.url}/api/chat", json=body)
             r.raise_for_status()
             message = r.json()["message"]
@@ -109,6 +195,7 @@ class FakeProvider:
     """Replays scripted replies in order. `calls` records the messages of each `chat` call."""
 
     name: Literal["ollama", "fake"] = "fake"
+    breaker: CircuitBreaker | None = None
 
     def __init__(self, replies: list[LLMReply], model: str = "fake-model") -> None:
         self.model = model

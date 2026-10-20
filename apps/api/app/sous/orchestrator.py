@@ -4,26 +4,47 @@ The model picks tools and explains what they return. Scope, numbers, evidence an
 are all produced by code. Prompts and tool results are never logged.
 """
 
+import asyncio
 import json
 import re
 import time
-from datetime import UTC, datetime
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager
+from datetime import UTC, date, datetime
 from typing import Any
 
 from opentelemetry import trace
+from opentelemetry.context import Context
+from opentelemetry.trace import set_span_in_context
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.context import request_id_var
+from app.db import scoped_session
+from app.errors import ProblemError
 from app.identity.models import Location
-from app.integrations.providers.square.business_date import get_zone
+from app.integrations.providers.square.business_date import business_date, get_zone
 from app.security.sessions import AuthContext
-from app.sous import prompt, tools, validator
-from app.sous.llm import LLMProvider, Message
-from app.sous.schemas import AskIn, Evidence, Kind, Period, SousAnswer, ToolUse
+from app.sous import fallback, prompt, tools, validator
+from app.sous.llm import LLMProvider, LLMReply, Message
+from app.sous.schemas import (
+    AskIn,
+    Evidence,
+    Heartbeat,
+    Kind,
+    Period,
+    SousAnswer,
+    SousEvent,
+    StatusEvent,
+    ToolEvent,
+    ToolUse,
+)
 from app.sous.tools import ToolResult
 
 MAX_ROUNDS = 4
 MAX_TOOL_CALLS = 6
+HEARTBEAT_SECONDS = 10.0
+
+SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
 _tracer = trace.get_tracer("chefos.sous")
 _THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
@@ -129,18 +150,43 @@ def _evidence_only_line(evidence: list[Evidence]) -> str:
     return "I couldn't produce an answer I could verify. Try rephrasing or narrowing the question."
 
 
+def tool_label(name: str, args: dict[str, Any]) -> str:
+    """What a tool step did, for the stream ("Checked sales for Oct 12 to Oct 18")."""
+    span = ""
+    try:
+        first, last = date.fromisoformat(args["from"]), date.fromisoformat(args["to"])
+        span = (
+            f" for {first:%b} {first.day}"
+            if first == last
+            else f" for {first:%b} {first.day} \u2013 {last:%b} {last.day}"
+        )
+    except KeyError, TypeError, ValueError:
+        pass
+    compare = {"previous_period": " vs the period before", "previous_year": " vs last year"}
+    return {
+        "get_sales_summary": f"Checked sales{span}{compare.get(str(args.get('compare')), '')}",
+        "get_daily_sales": f"Checked daily sales{span}",
+        "get_top_items": f"Checked top items{span}",
+        "get_today": "Checked today's sales so far",
+        "get_data_freshness": "Checked how current the data is",
+    }.get(name, f"Ran {name}")
+
+
 async def _call_tool(
     name: str,
     args: dict[str, Any],
-    db: AsyncSession,
+    open_session: SessionFactory,
     ctx: AuthContext,
     loc: Location,
     now: datetime,
     model: str,
-) -> tuple[ToolResult, ToolUse]:
-    with _tracer.start_as_current_span("sous.tool") as span:
+    parent: Context,
+) -> tuple[ToolResult, ToolEvent]:
+    with _tracer.start_as_current_span("sous.tool", context=parent) as span:
         t0 = time.perf_counter()
-        result = await tools.run_tool(name, args, db, ctx.org_id, loc, now)
+        # A session per tool call: no connection is held while the model is thinking.
+        async with open_session() as db:
+            result = await tools.run_tool(name, args, db, ctx.org_id, loc, now)
         ms = round((time.perf_counter() - t0) * 1000)
         span.set_attributes(
             {
@@ -151,42 +197,128 @@ async def _call_tool(
                 "sous.ms": ms,
             }
         )
-    return result, ToolUse(name=name, args=args, ms=ms, ok=result.ok)
+    event = ToolEvent(name=name, args=args, ms=ms, ok=result.ok, label=tool_label(name, args))
+    return result, event
 
 
-async def ask(
-    db: AsyncSession,
+async def _chat(
+    provider: LLMProvider, messages: list[Message], specs: list[dict[str, Any]]
+) -> AsyncIterator[Heartbeat | LLMReply]:
+    """One model call, yielding a heartbeat every HEARTBEAT_SECONDS until the reply arrives."""
+    task = asyncio.ensure_future(provider.chat(messages, specs))
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=HEARTBEAT_SECONDS)
+            if done:
+                yield task.result()
+                return
+            yield Heartbeat()
+    finally:
+        if not task.done():
+            task.cancel()  # the client went away
+
+
+async def events(
     ctx: AuthContext,
     loc: Location,
     req: AskIn,
     provider: LLMProvider,
     now: datetime | None = None,
-) -> SousAnswer:
+    *,
+    open_session: SessionFactory | None = None,
+) -> AsyncIterator[SousEvent]:
+    """Progress events for one question, ending with the SousAnswer (or raising ProblemError)."""
     now = now or datetime.now(UTC)
-    with _tracer.start_as_current_span("sous.ask") as span:
-        t0 = time.perf_counter()
-        answer = await _ask(db, ctx, loc, req, provider, now)
+    sessions = open_session or (lambda: scoped_session(ctx.org_id))
+    # Not a current span: an async generator can't keep a context attached across yields.
+    span = _tracer.start_span("sous.ask")
+    t0 = time.perf_counter()
+    answer: SousAnswer | None = None
+    try:
+        async for event in _run(ctx, loc, req, provider, now, sessions, set_span_in_context(span)):
+            if isinstance(event, SousAnswer):
+                answer = event
+            yield event
+    finally:
         span.set_attributes(
             {
                 "sous.prompt_version": prompt.PROMPT_VERSION,
                 "sous.model": provider.model,
-                "sous.kind": answer.kind,
-                "sous.tool_calls": len(answer.tools_used),
-                "sous.ok": answer.kind != "evidence_only",
+                "sous.kind": answer.kind if answer else "error",
+                "sous.mode": answer.mode if answer else "none",
+                "sous.tool_calls": len(answer.tools_used) if answer else 0,
+                "sous.ok": answer is not None and answer.kind != "evidence_only",
                 "sous.ms": round((time.perf_counter() - t0) * 1000),
             }
         )
-        return answer
+        span.end()
 
 
-async def _ask(
-    db: AsyncSession,
+async def ask(
+    ctx: AuthContext,
+    loc: Location,
+    req: AskIn,
+    provider: LLMProvider,
+    now: datetime | None = None,
+    *,
+    open_session: SessionFactory | None = None,
+) -> SousAnswer:
+    """The non-streaming form: drain events() and return the answer."""
+    async for event in events(ctx, loc, req, provider, now, open_session=open_session):
+        if isinstance(event, SousAnswer):
+            return event
+    raise RuntimeError("Sous finished without an answer")
+
+
+async def _run(
     ctx: AuthContext,
     loc: Location,
     req: AskIn,
     provider: LLMProvider,
     now: datetime,
-) -> SousAnswer:
+    sessions: SessionFactory,
+    parent: Context,
+) -> AsyncIterator[SousEvent]:
+    try:
+        async for event in _model_run(ctx, loc, req, provider, now, sessions, parent):
+            yield event
+    except ProblemError as exc:
+        if exc.code != "sous_unavailable":
+            raise
+        today = business_date(now, loc.timezone, loc.business_day_start)
+        plan = fallback.match(req.question, today)
+        if plan is None:
+            raise
+        yield StatusEvent(label="The assistant model isn't responding, so using a quick answer")
+        result, event = await _call_tool(
+            plan.tool, plan.args, sessions, ctx, loc, now, "fallback", parent
+        )
+        yield event
+        if not result.ok:
+            raise
+        yield SousAnswer(
+            kind="answer",
+            answer=fallback.render(plan, result.data),
+            period=_period([result], loc.timezone),
+            evidence=_evidence([result]),
+            limitations=[fallback.LIMITATION, *limitations([result], loc.timezone)],
+            tools_used=[ToolUse(**event.model_dump(exclude={"label"}))],
+            model="fallback",
+            prompt_version=prompt.PROMPT_VERSION,
+            request_id=request_id_var.get(),
+            mode="fallback",
+        )
+
+
+async def _model_run(
+    ctx: AuthContext,
+    loc: Location,
+    req: AskIn,
+    provider: LLMProvider,
+    now: datetime,
+    sessions: SessionFactory,
+    parent: Context,
+) -> AsyncIterator[SousEvent]:
     messages: list[Message] = [
         {"role": "system", "content": prompt.build_system_prompt(loc, now)},
         *({"role": t.role, "content": t.content} for t in req.history),
@@ -211,8 +343,15 @@ async def _ask(
             request_id=request_id_var.get(),
         )
 
+    yield StatusEvent(label="Thinking")
     for round_no in range(MAX_ROUNDS):
-        reply = await provider.chat(messages, specs)
+        reply: LLMReply | None = None
+        async for item in _chat(provider, messages, specs):
+            if isinstance(item, Heartbeat):
+                yield item
+            else:
+                reply = item
+        assert reply is not None
         if reply.tool_calls:
             if round_no == MAX_ROUNDS - 1:
                 break  # no rounds left to use the results
@@ -222,12 +361,14 @@ async def _ask(
                     limit = {"error": "Tool call limit reached. Answer with the results you have."}
                     messages.append(_tool_message(call.name, limit))
                     continue
-                result, use = await _call_tool(
-                    call.name, call.arguments, db, ctx, loc, now, provider.model
+                result, event = await _call_tool(
+                    call.name, call.arguments, sessions, ctx, loc, now, provider.model, parent
                 )
                 results.append(result)
-                used.append(use)
+                used.append(ToolUse(**event.model_dump(exclude={"label"})))
                 messages.append(_tool_message(call.name, result.data))
+                yield event
+            yield StatusEvent(label="Reading the results")
             continue
 
         kind, text = split_kind(plain_text(strip_think(reply.content)))
@@ -235,10 +376,12 @@ async def _ask(
         if kind == "answer" and text:
             bad = validator.ungrounded_numbers(text, (r.data for r in results if r.ok))
         if text and not bad:
-            return finish(kind, text)
+            yield finish(kind, text)
+            return
         if retried:
             break
         retried = True
+        yield StatusEvent(label="Double-checking the numbers")
         messages.append(_assistant(reply.content))
         messages.append(
             {
@@ -254,4 +397,4 @@ async def _ask(
         )
 
     evidence = _evidence(results)
-    return finish("evidence_only", _evidence_only_line(evidence))
+    yield finish("evidence_only", _evidence_only_line(evidence))

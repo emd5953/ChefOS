@@ -17,26 +17,30 @@ def _range(first: date, last: date) -> str:
     return f"{first.isoformat()} to {last.isoformat()}"
 
 
-def date_reference(today: date) -> str:
-    """Pre-computed ranges, so the model copies dates instead of doing calendar arithmetic."""
+def named_ranges(today: date) -> list[tuple[str, tuple[date, date]]]:
+    """Business-date ranges by name. Shared by the prompt and the no-model fallback."""
     monday = today - timedelta(days=today.weekday())
     first_of_month = today.replace(day=1)
     last_of_prev = first_of_month - timedelta(days=1)
     yesterday = today - timedelta(days=1)
-    rows = [
-        ("yesterday", _range(yesterday, yesterday)),
-        ("this week so far (Monday to today)", _range(monday, today)),
-        (
-            "last week (Monday to Sunday)",
-            _range(monday - timedelta(days=7), monday - timedelta(days=1)),
-        ),
+    return [
+        ("today", (today, today)),
+        ("yesterday", (yesterday, yesterday)),
+        ("this week so far (Monday to today)", (monday, today)),
+        ("last week (Monday to Sunday)", (monday - timedelta(days=7), monday - timedelta(days=1))),
         # "Last N days" means complete days: today is still in progress.
-        ("last 7 days", _range(today - timedelta(days=7), yesterday)),
-        ("last 30 days", _range(today - timedelta(days=30), yesterday)),
-        ("this month so far", _range(first_of_month, today)),
-        ("last month", _range(last_of_prev.replace(day=1), last_of_prev)),
+        ("last 7 days", (today - timedelta(days=7), yesterday)),
+        ("last 30 days", (today - timedelta(days=30), yesterday)),
+        ("this month so far", (first_of_month, today)),
+        ("last month", (last_of_prev.replace(day=1), last_of_prev)),
     ]
-    return "\n".join(f"- {label}: {value}" for label, value in rows)
+
+
+def date_reference(today: date) -> str:
+    """Pre-computed ranges, so the model copies dates instead of doing calendar arithmetic."""
+    return "\n".join(
+        f"- {label}: {_range(*span)}" for label, span in named_ranges(today) if label != "today"
+    )
 
 
 def build_system_prompt(loc: Location, now: datetime) -> str:

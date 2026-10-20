@@ -39,6 +39,9 @@ export function AnswerView({ answer }: { answer: SousAnswer }) {
   return (
     <div className="min-w-0 space-y-3">
       {label && <Badge tone={label.tone}>{label.text}</Badge>}
+      {answer.mode === "fallback" && (
+        <p className="text-[11px] font-medium text-foreground/45">Quick answer · assistant offline</p>
+      )}
       {answer.kind === "evidence_only" && (
         <p className="text-[12px] leading-relaxed text-foreground/55">
           I couldn’t verify my own wording against the data, so here are the figures themselves.

@@ -11,6 +11,7 @@ import pytest_asyncio
 from app.integrations import sync
 from app.main import app
 from app.sous import api as sous_api
+from app.sous import llm
 from app.sous.llm import LLMProvider
 from tests.integrations.conftest import (  # noqa: F401
     Clock,
@@ -53,4 +54,5 @@ def use_provider() -> Iterator[Callable[[LLMProvider], None]]:
 @pytest_asyncio.fixture(autouse=True)
 async def fresh_rate_limits() -> AsyncIterator[None]:
     sous_api._asked.clear()
+    llm.BREAKER.reset()
     yield

@@ -5,6 +5,8 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 Kind = Literal["answer", "clarify", "refuse", "unsupported", "evidence_only"]
+Mode = Literal["model", "fallback"]
+BreakerState = Literal["closed", "open", "half_open"]
 Unit = Literal["usd_cents", "count", "percent", "percent_pts", "hours"]
 
 
@@ -52,6 +54,7 @@ class SousAnswer(BaseModel):
     model: str
     prompt_version: str
     request_id: str
+    mode: Mode = "model"
 
 
 class StatusOut(BaseModel):
@@ -60,3 +63,28 @@ class StatusOut(BaseModel):
     available: bool  # the provider is reachable and the configured model is pulled
     model_pulled: bool
     prompt_version: str
+    breaker: BreakerState = "closed"
+
+
+# --- stream events (POST /v1/sous/ask/stream) ------------------------------------------------
+
+
+class StatusEvent(BaseModel):
+    label: str
+
+
+class ToolEvent(ToolUse):
+    label: str
+
+
+class ErrorEvent(BaseModel):
+    status: int
+    code: str
+    detail: str
+
+
+class Heartbeat(BaseModel):
+    """Sent as an SSE comment while the model is thinking, so proxies keep the stream open."""
+
+
+SousEvent = StatusEvent | ToolEvent | SousAnswer | Heartbeat

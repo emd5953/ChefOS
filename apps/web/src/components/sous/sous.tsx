@@ -1,16 +1,25 @@
 "use client";
 
-import { ArrowUp, RotateCw, Sparkles, Trash2 } from "lucide-react";
+import { ArrowUp, Check, RotateCw, Sparkles, Square, Trash2, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { isApiError } from "@/lib/api";
+import { ApiError, isApiError } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 import { useLocationScope } from "@/lib/location-scope";
-import { useAskSous, useSousStatus } from "@/lib/queries";
-import type { SousAnswer, SousTurn } from "@/lib/types";
+import { useSousStatus } from "@/lib/queries";
+import { streamSse } from "@/lib/sse";
+import type {
+  SousAnswer,
+  SousAskInput,
+  SousErrorEvent,
+  SousStatusEvent,
+  SousToolEvent,
+  SousTurn,
+} from "@/lib/types";
 import { useReducedMotion } from "@/lib/use-reduced-motion";
 import { AnswerView } from "./answer";
 
@@ -30,7 +39,7 @@ const STARTERS = [
 
 type Message =
   | { id: number; role: "user"; text: string }
-  | { id: number; role: "assistant"; state: "pending" }
+  | { id: number; role: "assistant"; state: "pending"; status: string; steps: SousToolEvent[] }
   | { id: number; role: "assistant"; state: "done"; answer: SousAnswer }
   | { id: number; role: "assistant"; state: "error"; error: unknown; question: string };
 
@@ -87,9 +96,28 @@ function OllamaNotice({ model }: { model: string }) {
   );
 }
 
+function BreakerNotice() {
+  return (
+    <div role="status" className="mb-4 rounded-xl border border-border bg-muted px-4 py-3 text-[13px] leading-relaxed text-foreground/65">
+      <p className="font-semibold text-foreground">The assistant isn’t responding</p>
+      <p className="mt-1">
+        The assistant model isn’t responding. Simple questions like “sales yesterday” still work.
+      </p>
+    </div>
+  );
+}
+
+function parseEvent<T>(data: string): T | null {
+  try {
+    return JSON.parse(data) as T;
+  } catch {
+    return null;
+  }
+}
+
 function Chat({ locationId }: { locationId: string }) {
   const status = useSousStatus();
-  const ask = useAskSous();
+  const { csrfToken } = useAuth();
   const reduced = useReducedMotion();
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
@@ -97,12 +125,18 @@ function Chat({ locationId }: { locationId: string }) {
   const nextId = useRef(1);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const model = status.data?.model ?? FALLBACK_MODEL;
   const checking = status.isPending;
+  const breakerOpen = status.data?.breaker === "open";
   const unavailable = !checking && (status.isError || !status.data?.available);
   const pending = messages.some((m) => m.role === "assistant" && m.state === "pending");
-  const disabled = unavailable || checking;
+  // Stay enabled while unavailable: the deterministic fallback may still answer.
+  const disabled = checking;
+
+  // Unmount (including a location change, which re-keys Chat) aborts the in-flight stream.
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "end" });
@@ -122,24 +156,57 @@ function Chat({ locationId }: { locationId: string }) {
         )
         .slice(-MAX_HISTORY);
       const id = nextId.current++;
-      setMessages([...prior, { id, role: "assistant", state: "pending" }]);
-      ask.mutate(
-        { question, location_id: locationId, history },
-        {
-          onSuccess: (answer) => {
+      setMessages([...prior, { id, role: "assistant", state: "pending", status: "Thinking", steps: [] }]);
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const fail = (error: unknown) => {
+        setMessages((ms) =>
+          ms.map((m) => (m.id === id ? { id, role: "assistant", state: "error", error, question } : m)),
+        );
+        if (isApiError(error) && error.code === "sous_unavailable") void status.refetch();
+      };
+      const input: SousAskInput = { question, location_id: locationId, history };
+      streamSse("/api/v1/sous/ask/stream", input, {
+        signal: controller.signal,
+        csrfToken,
+        onEvent: ({ event, data }) => {
+          if (controller.signal.aborted) return;
+          if (event === "status") {
+            const e = parseEvent<SousStatusEvent>(data);
+            if (!e) return;
+            setMessages((ms) =>
+              ms.map((m) => (m.id === id && m.role === "assistant" && m.state === "pending" ? { ...m, status: e.label } : m)),
+            );
+          } else if (event === "tool") {
+            const e = parseEvent<SousToolEvent>(data);
+            if (!e) return;
+            setMessages((ms) =>
+              ms.map((m) =>
+                m.id === id && m.role === "assistant" && m.state === "pending" ? { ...m, steps: [...m.steps, e] } : m,
+              ),
+            );
+          } else if (event === "answer") {
+            const answer = parseEvent<SousAnswer>(data);
+            if (!answer) return fail(new Error("Malformed answer"));
             setMessages((ms) => ms.map((m) => (m.id === id ? { id, role: "assistant", state: "done", answer } : m)));
             setAnnounce(answer.answer);
-          },
-          onError: (error) => {
-            setMessages((ms) =>
-              ms.map((m) => (m.id === id ? { id, role: "assistant", state: "error", error, question } : m)),
-            );
-            if (isApiError(error) && error.code === "sous_unavailable") void status.refetch();
-          },
+          } else if (event === "error") {
+            const e = parseEvent<SousErrorEvent>(data);
+            fail(new ApiError(e?.status ?? 500, { code: e?.code, detail: e?.detail }));
+          }
         },
-      );
+      })
+        .catch((error: unknown) => {
+          // Aborted by Stop, clear, or unmount: not an error.
+          if (controller.signal.aborted) return;
+          fail(error);
+        })
+        .finally(() => {
+          if (abortRef.current === controller) abortRef.current = null;
+        });
     },
-    [ask, locationId, status],
+    [csrfToken, locationId, status],
   );
 
   const send = useCallback(
@@ -162,10 +229,18 @@ function Chat({ locationId }: { locationId: string }) {
     [messages, run],
   );
 
+  const stop = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setMessages((ms) => ms.filter((m) => !(m.role === "assistant" && m.state === "pending")));
+    inputRef.current?.focus();
+  };
+
   const clear = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
     setMessages([]);
     setAnnounce("");
-    ask.reset();
     inputRef.current?.focus();
   };
 
@@ -185,7 +260,7 @@ function Chat({ locationId }: { locationId: string }) {
 
   return (
     <div className="mx-auto w-full max-w-3xl">
-      {unavailable && <OllamaNotice model={model} />}
+      {breakerOpen ? <BreakerNotice /> : unavailable && <OllamaNotice model={model} />}
 
       <Card className="flex flex-col">
         <div className="min-h-[320px] space-y-5 p-4 sm:p-6">
@@ -227,7 +302,7 @@ function Chat({ locationId }: { locationId: string }) {
                     <div className="max-w-[95%]">
                       <p className="eyebrow mb-1.5 text-[10px]">Sous</p>
                       {m.state === "pending" ? (
-                        <Thinking />
+                        <Thinking status={m.status} steps={m.steps} onStop={stop} />
                       ) : m.state === "done" ? (
                         <AnswerView answer={m.answer} />
                       ) : (
@@ -261,7 +336,7 @@ function Chat({ locationId }: { locationId: string }) {
               rows={2}
               aria-invalid={over || undefined}
               aria-describedby="sous-hint"
-              placeholder={unavailable ? "Sous is unavailable" : "Ask a question…"}
+              placeholder="Ask a question…"
               className="min-h-11 w-full resize-none rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground placeholder:text-foreground/35 transition-[border-color,box-shadow] duration-150 hover:border-foreground/40 focus-visible:border-accent focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-accent/15 disabled:opacity-50 aria-[invalid=true]:border-destructive"
             />
             <Button type="submit" size="icon" disabled={!canSend} aria-label="Send question" className="shrink-0">
@@ -293,7 +368,7 @@ function Chat({ locationId }: { locationId: string }) {
   );
 }
 
-function Thinking() {
+function Thinking({ status, steps, onStop }: { status: string; steps: SousToolEvent[]; onStop: () => void }) {
   const [secs, setSecs] = useState(0);
   useEffect(() => {
     const start = Date.now();
@@ -301,10 +376,32 @@ function Thinking() {
     return () => window.clearInterval(id);
   }, []);
   return (
-    <p role="status" className="flex items-center gap-2 text-[13px] text-foreground/55">
-      <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-accent motion-reduce:animate-none" />
-      Thinking… {secs}s
-    </p>
+    <div className="space-y-2">
+      <div className="flex items-center gap-3">
+        <p role="status" className="flex items-center gap-2 text-[13px] text-foreground/55">
+          <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-accent motion-reduce:animate-none" />
+          {status}… {secs}s
+        </p>
+        <Button variant="outline" size="sm" onClick={onStop}>
+          <Square aria-hidden /> Stop
+        </Button>
+      </div>
+      {steps.length > 0 && (
+        <ul aria-label="Steps so far" className="space-y-1 text-[12px] text-foreground/55">
+          {steps.map((t, i) => (
+            <li key={i} className="flex items-center gap-1.5">
+              {t.ok ? (
+                <Check className="size-3 shrink-0 text-foreground/45" aria-label="Done" />
+              ) : (
+                <TriangleAlert className="size-3 shrink-0 text-warning" aria-label="Problem" />
+              )}
+              <span className="min-w-0 break-words">{t.label}</span>
+              <span className="font-mono text-[11px] text-foreground/40">{t.ms} ms</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

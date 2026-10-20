@@ -50,8 +50,8 @@ async def ask(
     )
     async with scoped_session(conn.org_id) as db:
         loc = await db.get_one(Location, conn.location_id)
-        req = AskIn(question=question, location_id=conn.location_id, **kw)
-        return await orchestrator.ask(db, ctx, loc, req, provider, now=clock.now)
+    req = AskIn(question=question, location_id=conn.location_id, **kw)
+    return await orchestrator.ask(ctx, loc, req, provider, now=clock.now)
 
 
 async def week_summary(conn: Connected) -> Any:

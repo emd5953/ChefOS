@@ -181,6 +181,8 @@ export type SousStatus = {
   model: string;
   available: boolean;
   prompt_version: string;
+  /** Absent on older APIs; treat as "closed". */
+  breaker?: "closed" | "open" | "half_open";
 };
 
 export type SousKind = "answer" | "clarify" | "refuse" | "unsupported" | "evidence_only";
@@ -206,7 +208,12 @@ export type SousAnswer = {
   model: string;
   prompt_version: string;
   request_id: string;
+  mode: "model" | "fallback";
 };
+
+export type SousStatusEvent = { label: string };
+export type SousToolEvent = { name: string; args: Record<string, unknown>; ms: number; ok: boolean; label: string };
+export type SousErrorEvent = { status: number; code: string; detail: string };
 
 export type SousTurn = { role: "user" | "assistant"; content: string };
 
