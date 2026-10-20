@@ -1,0 +1,140 @@
+# Local ChefOS stack. Run through the Makefile (`make up`) so .env exists and migrations run.
+name: chefos
+
+x-api-env: &api-env
+  # Inside the compose network services talk to each other by name. On the host (tests, CLI)
+  # the same variables come from .env and point at localhost.
+  DATABASE_URL: postgresql+asyncpg://chefos_app:chefos_app@postgres:5432/chefos
+  MIGRATIONS_DATABASE_URL: postgresql+asyncpg://chefos_owner:chefos_owner@postgres:5432/chefos
+  TEMPORAL_ADDRESS: temporal:7233
+  S3_ENDPOINT: http://minio:9000
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+
+x-api-base: &api-base
+  build:
+    context: ../apps/api
+  image: chefos-api:dev
+  env_file: ../.env
+  environment: *api-env
+  volumes:
+    - ../apps/api:/app
+  depends_on:
+    postgres:
+      condition: service_healthy
+    temporal:
+      condition: service_healthy
+    otel-collector:
+      condition: service_started
+
+services:
+  postgres:
+    image: postgres:17.6
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  temporal:
+    image: temporalio/temporal:1.5.1
+    # root so the named volume (root-owned) is writable for the SQLite file
+    user: "0:0"
+    command: ["server", "start-dev", "--ip", "0.0.0.0", "--db-filename", "/data/temporal.db"]
+    ports:
+      - "7233:7233"
+      - "8233:8233"
+    volumes:
+      - temporal-data:/data
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "localhost:7233"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  minio:
+    # S3-compatible object storage. MinIO stopped publishing images, so this is RustFS
+    # (same S3 API; console on 9001).
+    image: rustfs/rustfs:1.0.3
+    command: ["--address", ":9000", "--console-enable", "--console-address", ":9001", "/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: chefos
+      RUSTFS_SECRET_KEY: chefos-dev-secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  minio-init:
+    # Creates the chefos-raw bucket, then idles (so `up --wait` sees a healthy service).
+    image: amazon/aws-cli:2.38.2
+    depends_on:
+      - minio
+    environment:
+      AWS_ACCESS_KEY_ID: chefos
+      AWS_SECRET_ACCESS_KEY: chefos-dev-secret
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        for i in $$(seq 1 30); do
+          aws --endpoint-url http://minio:9000 s3api head-bucket --bucket chefos-raw 2>/dev/null \
+            || aws --endpoint-url http://minio:9000 s3api create-bucket --bucket chefos-raw >/dev/null 2>&1
+          aws --endpoint-url http://minio:9000 s3api head-bucket --bucket chefos-raw 2>/dev/null && exec sleep infinity
+          sleep 2
+        done
+        exit 1
+    healthcheck:
+      test: ["CMD-SHELL", "aws --endpoint-url http://minio:9000 s3api head-bucket --bucket chefos-raw"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+
+  jaeger:
+    image: jaegertracing/jaeger:2.10.0
+    ports:
+      - "16686:16686"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.136.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    depends_on:
+      - jaeger
+
+  api:
+    <<: *api-base
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--reload", "--reload-dir", "app"]
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  worker:
+    <<: *api-base
+    # watchfiles restarts the worker on code changes.
+    command: ["watchfiles", "--filter", "python", "python -m app.workflows.worker", "app"]
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/worker.ready"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  postgres-data:
+  temporal-data:
+  minio-data:

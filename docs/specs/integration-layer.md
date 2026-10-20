@@ -55,9 +55,11 @@ Connectors own only `fetch` and `normalize`. Landing, idempotency, identity mapp
 | --- | --- |
 | API | FastAPI service, `integrations` module in the modular monolith |
 | Workflows | Temporal (Python SDK) workers on the local dev server: one workflow type per job kind |
-| Storage | PostgreSQL. Raw payloads in `jsonb`; payloads over 256 KB go to object storage (MinIO locally) with a pointer |
+| Storage | PostgreSQL. Raw payloads in `jsonb`; payloads over 256 KB go to object storage (RustFS locally) with a pointer |
 | Secrets | OAuth tokens envelope-encrypted through `KeyProvider` (local AES-GCM key from `.env`); DB stores ciphertext only |
 | Square | Developer sandbox only (free). Official `squareup` Python SDK, `Square-Version` pinned in config |
+
+**Square modes.** `SQUARE_MODE=fake` (default) swaps the HTTP client for `FakeSquareClient`. It's a deterministic simulated seller ("Juniper House", Brooklyn, full-service) that returns payloads in Square's v2 shapes: about 13 months of history, new orders appearing as wall-clock time passes, late refunds, an unmapped "open food" item, and an unlinked team member. Everything downstream of the client (landing, normalization, read models, freshness) is the real pipeline. The demo works with zero credentials, and the same normalizer tests cover both modes. `SQUARE_MODE=sandbox` uses `HttpSquareClient` against `connect.squareupsandbox.com` with the developer's free sandbox app credentials.
 
 Everything runs locally per [ADR 0002](../adr/0002-production-stack.md). OAuth redirect and webhook delivery need a reachable URL. The redirect works on `localhost`. For webhooks, use a free tunnel (e.g. `cloudflared` quick tunnel) during demos. Scheduled pulls still converge without it.
 
@@ -255,7 +257,7 @@ migrations/                     schema above
 
 ### Dependencies
 
-`squareup` (official SDK), `temporalio`, `boto3` (S3 API against MinIO), `cryptography` (AES-GCM). All free. No unified-API vendor.
+`squareup` (official SDK), `temporalio`, `boto3` (S3 API against RustFS), `cryptography` (AES-GCM). All free. No unified-API vendor.
 
 ## Behavior
 

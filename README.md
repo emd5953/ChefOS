@@ -9,9 +9,35 @@ Modules: **Team**, **Commerce**, **Inventory**. Shared capabilities: **Integrati
 | Area | State |
 | --- | --- |
 | Product requirements | Draft ([PRD](docs/prd.md)) |
-| Production services | Not started. Phase 0 and the Square integration come first ([roadmap](docs/roadmap.md)) |
-| Prototype workspace | Runnable UI/workflow sandbox (`server.py`, `product.js`); not the production codebase |
-| Marketing site | Static reproduction of the ChefOS public site, kept as design reference |
+| Platform foundation (Phase 0) | Built: local stack, RLS, auth, Temporal workers, encryption, CI |
+| Square integration (M1–M5) | Built: simulated sandbox by default, real sandbox optional |
+| Commerce (Phase 2) | Built: overview, sales, menu items, freshness |
+| Team, Inventory, Sous | Not started ([roadmap](docs/roadmap.md)) |
+| Prototype workspace | Legacy UX reference (`server.py`, `product.js`); removed once fully covered |
+| Marketing site | Served by the web app at `/` |
+
+## Run the demo
+
+Requires Docker Desktop, [uv](https://docs.astral.sh/uv/), and Node 24. Everything runs locally for free.
+
+```sh
+make up                      # Postgres, Temporal, RustFS, OTel, Jaeger, API, worker
+make demo                    # demo account + simulated Square + 13-month backfill (~30 s)
+cd apps/web && npm install && npm run dev
+```
+
+Open http://localhost:3000/login and sign in as `owner@chefos.local` / `ChefOS-demo-2026!`.
+
+**Walkthrough:** Overview (live today, last 7 days vs previous, 30-day trend) → Sales (any range, compare to previous period or last year, channels, labor %) → Menu items → Integrations (sync health, backfill, mapping issues, sync runs). New orders from the simulated POS arrive every minute during service hours (America/New_York).
+
+| URL | What |
+| --- | --- |
+| http://localhost:3000 | Web app and marketing site |
+| http://localhost:8080/docs | API (OpenAPI) |
+| http://localhost:8233 | Temporal UI (workflows, schedules) |
+| http://localhost:16686 | Jaeger (traces) |
+
+Other targets: `make test`, `make lint`, `make smoke`, `make down` (keep data), `make reset` (wipe data). To use a real Square sandbox, set `SQUARE_MODE=sandbox` and the `SQUARE_*` credentials in `.env`.
 
 ## Documentation
 

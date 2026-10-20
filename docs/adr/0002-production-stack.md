@@ -19,7 +19,7 @@ Build the product on a production-grade stack that runs entirely on a developer 
 | API / domain | Python, FastAPI, Pydantic. Modular monolith by module: commerce, inventory, team, integrations, sous | `uvicorn` container |
 | Database | PostgreSQL with row-level security | `postgres` container |
 | Workflows | Temporal with Python workers | Temporal dev server container |
-| Files | S3 API | MinIO container |
+| Files | S3 API | RustFS container (S3-compatible; MinIO no longer publishes images) |
 | Secrets | Envelope encryption behind a `KeyProvider` interface | AES-GCM key from `.env` (KMS-compatible interface, not KMS) |
 | Observability | OpenTelemetry traces, structured logs, metrics | OTel Collector + Jaeger containers |
 | LLM (Sous) | Provider interface | Ollama with a local open-weights model |

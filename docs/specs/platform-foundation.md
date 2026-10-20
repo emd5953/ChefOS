@@ -53,7 +53,7 @@ Tenant isolation uses two layers. The service layer passes explicit scope to eve
 | Workers | `temporalio` Python SDK |
 | Telemetry | `opentelemetry-sdk`, FastAPI/SQLAlchemy/asyncpg instrumentations, `temporalio.contrib.opentelemetry`; `structlog` JSON logs with trace IDs |
 | Python quality | `ruff` (lint + format), `mypy --strict` on `app/`, `pytest` + `pytest-asyncio` |
-| Web | Next.js (current stable, App Router), TypeScript, pnpm, Node 24 LTS |
+| Web | Next.js (current stable, App Router), TypeScript, Tailwind v4, npm, Node 24 LTS |
 | Task runner | `Makefile` (no extra install) |
 
 ### Repository layout
@@ -100,13 +100,13 @@ Makefile
 | --- | --- | --- | --- |
 | postgres | `postgres:17` | 5432 | Volume-backed; `init.sql` creates roles |
 | temporal | `temporalio/temporal` (`server start-dev`) | 7233, 8233 (UI) | SQLite file on a volume so history survives restarts |
-| minio | `minio/minio` | 9000, 9001 (console) | Bucket `chefos-raw` created on startup |
+| minio | `rustfs/rustfs` (S3 API; MinIO stopped publishing images) | 9000, 9001 (console at `/rustfs/console/`) | Bucket `chefos-raw` created on startup |
 | otel-collector | `otel/opentelemetry-collector-contrib` | 4317, 4318 | Exports traces to Jaeger, logs to stdout |
 | jaeger | `jaegertracing/jaeger` (v2) | 16686 (UI) | In-memory storage |
 | api | built from `apps/api` | 8080 | `uvicorn --reload` with a source mount |
 | worker | built from `apps/api` | none | Same image, `python -m app.workflows.worker` |
 
-Images are pinned to exact versions in the Compose file. The web app runs on the host (`pnpm dev`, port 3000), not in Compose, for fast reloads. The prototype keeps port 8000.
+Images are pinned to exact versions in the Compose file. The web app runs on the host (`npm run dev`, port 3000), not in Compose, for fast reloads. The prototype keeps port 8000.
 
 ### Makefile targets
 
@@ -117,7 +117,7 @@ make reset       stop and delete volumes
 make migrate     alembic upgrade head
 make test        API tests against the compose Postgres
 make lint        ruff + mypy + web lint/typecheck
-make web         pnpm dev in apps/web
+make web         npm run dev in apps/web
 ```
 
 ### Configuration (`.env.example`)
@@ -249,7 +249,7 @@ class KeyProvider(Protocol):
 Runs on push and PR, using only free GitHub Actions minutes.
 
 - **api:** `uv sync` → `ruff check` → `ruff format --check` → `mypy` → Postgres service container with `init.sql` → `alembic upgrade head` → `pytest`.
-- **web:** `pnpm install --frozen-lockfile` → `lint` → `tsc --noEmit` → `next build`.
+- **web:** `npm ci` → `lint` → `tsc --noEmit` → `next build`.
 - **migrations:** `alembic upgrade head` → `downgrade base` → `upgrade head` (migrations must be reversible).
 
 ## Behavior
@@ -304,7 +304,7 @@ Runs on push and PR, using only free GitHub Actions minutes.
 
 Each one leaves `main` working and green in CI.
 
-1. **F1: Skeleton and local stack.** Monorepo layout, Compose with all infra services, API with `/healthz` and `/readyz`, Makefile, `.env.example`, telemetry wiring. Exit: `make up` brings all services up healthy, and all three UIs (Temporal, Jaeger, MinIO) load.
+1. **F1: Skeleton and local stack.** Monorepo layout, Compose with all infra services, API with `/healthz` and `/readyz`, Makefile, `.env.example`, telemetry wiring. Exit: `make up` brings all services up healthy, and all three UIs (Temporal, Jaeger, RustFS) load.
 2. **F2: CI.** GitHub Actions for api, web placeholder, and migrations. Exit: green run on `main`.
 3. **F3: Database and RLS.** Roles, Alembic, identity tables, policies, scoped session dependency, RLS test suite. Exit: all RLS tests pass in CI.
 4. **F4: Auth and identity API.** Signup/login/logout/me, sessions, CSRF, org and locations endpoints, problem+json, audit events. Exit: auth tests pass. A curl session can sign up and create locations.

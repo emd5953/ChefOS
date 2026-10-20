@@ -7,13 +7,17 @@ The sequence is integration-first. Module features are built on real imported da
 
 ## Current state
 
-- Static reproduction of the ChefOS public site (design reference).
-- Prototype workspace (`server.py` + `product.js`): SQLite, auth, and basic screens for inventory, purchase orders, recipes, waste, employees, shifts, time clock, tasks, sales summaries, and a daily-sales ingest key. A sandbox, not the production codebase.
-- Production services: not started.
+As of 2026-10-19:
+
+- **Phase 0:** done.
+- **Phase 1:** M1–M5 done in simulated mode. Real-sandbox mode is untested.
+- **Phase 2:** Commerce views done. Prototype deletion pending.
+- **Phases 3–6:** not started.
+- **Prototype workspace** (`server.py` + `product.js`): legacy UX reference, to be deleted once its screens are covered.
 
 ## Phase 0: Platform foundation
 
-[Spec](specs/platform-foundation.md). Monorepo layout (`apps/api`, `apps/web`, `infra/`), Docker Compose (Postgres, Temporal dev server, MinIO, OTel Collector, Jaeger), FastAPI skeleton, migrations and RLS, identity module (orgs, locations, users, roles, sessions), worker skeleton, `KeyProvider`, GitHub Actions CI (free tier), OpenTelemetry wiring.
+[Spec](specs/platform-foundation.md). Monorepo layout (`apps/api`, `apps/web`, `infra/`), Docker Compose (Postgres, Temporal dev server, RustFS, OTel Collector, Jaeger), FastAPI skeleton, migrations and RLS, identity module (orgs, locations, users, roles, sessions), worker skeleton, `KeyProvider`, GitHub Actions CI (free tier), OpenTelemetry wiring.
 
 **Exit:** from a clean checkout, `docker compose up` starts everything. A user can sign up, create an org and location, and sign in. A no-op Temporal workflow runs scoped to that org and shows up in Jaeger. CI runs tests, lint, and migrations.
 

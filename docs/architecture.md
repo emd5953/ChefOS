@@ -26,7 +26,7 @@ flowchart LR
       API[API - FastAPI modular monolith]
       WK[Temporal workers]
       DB[(PostgreSQL)]
-      S3[(MinIO object storage)]
+      S3[(RustFS object storage)]
       LLM[Ollama - local LLM]
     end
 
@@ -102,7 +102,7 @@ See [ADR 0002](adr/0002-production-stack.md) for the decision and rationale.
 | API | Python, FastAPI, Pydantic | `uvicorn` container |
 | Database | PostgreSQL (RLS enabled) | `postgres` container |
 | Workflows | Temporal, Python workers | Temporal dev server container |
-| Files | S3 API | MinIO container |
+| Files | S3 API | RustFS container (S3-compatible; MinIO no longer publishes images) |
 | Secrets | Envelope encryption via `KeyProvider` | AES-GCM key from `.env` |
 | LLM | `LLMProvider` interface | Ollama |
 | Observability | OpenTelemetry traces, structured logs, metrics | OTel Collector + Jaeger containers |

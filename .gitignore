@@ -6,3 +6,10 @@ data/
 *.sqlite3
 *.db
 .DS_Store
+.env
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+node_modules/
+.next/
