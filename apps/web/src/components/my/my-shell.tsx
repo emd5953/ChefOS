@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Bell, CalendarDays, LayoutDashboard, LogOut, type LucideIcon } from "lucide-react";
+import { Bell, CalendarDays, ClipboardList, LayoutDashboard, LogOut, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
@@ -19,6 +19,7 @@ type Tab = { label: string; path: string; icon: LucideIcon };
 
 const TABS: Tab[] = [
   { label: "Schedule", path: "/my", icon: CalendarDays },
+  { label: "Requests", path: "/my/requests", icon: ClipboardList },
   { label: "Alerts", path: "/my/alerts", icon: Bell },
 ];
 

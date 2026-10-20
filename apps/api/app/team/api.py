@@ -11,10 +11,15 @@ from fastapi import APIRouter, Query, Request, Response
 
 from app.identity.schemas import OrgOut, SessionOut, UserOut
 from app.security.sessions import AuthDep, OrgSession, StaffDep, set_session_cookie
-from app.team import invitations, me, notify, schedule, service
+
+# `requests` also registers the time-off and availability conflict checks with the builder.
+from app.team import invitations, me, notify, requests, schedule, service
 from app.team.schemas import (
+    AvailabilityIn,
+    AvailabilityOut,
     CopyOut,
     CopyRequest,
+    Decision,
     EmployeeCreate,
     EmployeeList,
     EmployeeOut,
@@ -27,6 +32,7 @@ from app.team.schemas import (
     InvitationPreview,
     MarkRead,
     MergeRequest,
+    MyAvailability,
     MyWeek,
     NotificationList,
     PositionCreate,
@@ -35,6 +41,7 @@ from app.team.schemas import (
     PositionUpdate,
     PublishOut,
     PublishRequest,
+    RequestsOut,
     ScheduleOut,
     ShiftIn,
     ShiftOut,
@@ -43,6 +50,9 @@ from app.team.schemas import (
     StationList,
     StationOut,
     StationUpdate,
+    TimeOffIn,
+    TimeOffList,
+    TimeOffOut,
     UnreadCount,
 )
 
@@ -200,6 +210,35 @@ async def publish(
     )
 
 
+# ---------------------------------------------------------------- requests inbox
+
+
+@team.get("/requests", response_model=RequestsOut)
+async def list_requests(
+    ctx: StaffDep,
+    db: OrgSession,
+    location_id: uuid.UUID | None = None,
+    status: Literal["pending", "history"] = "pending",
+) -> RequestsOut:
+    return await requests.list_requests(db, await service.scope_for(ctx), location_id, status)
+
+
+@team.post("/time-off/{id}/decide", response_model=TimeOffOut)
+async def decide_time_off(
+    id: uuid.UUID, body: Decision, ctx: StaffDep, db: OrgSession
+) -> TimeOffOut:
+    scope = await service.scope_for(ctx)
+    return await requests.decide_time_off(db, scope, id, body.decision, body.note)
+
+
+@team.post("/availability/{id}/decide", response_model=AvailabilityOut)
+async def decide_availability(
+    id: uuid.UUID, body: Decision, ctx: StaffDep, db: OrgSession
+) -> AvailabilityOut:
+    scope = await service.scope_for(ctx)
+    return await requests.decide_availability(db, scope, id, body.decision, body.note)
+
+
 # ---------------------------------------------------------------- invitations
 
 
@@ -259,6 +298,33 @@ async def accept_invitation(
 @mine.get("/me/week", response_model=MyWeek)
 async def my_week(ctx: AuthDep, db: OrgSession, week_start: date | None = None) -> MyWeek:
     return await me.my_week(db, ctx.org_id, ctx.user_id, week_start)
+
+
+@mine.get("/me/availability", response_model=MyAvailability)
+async def my_availability(ctx: AuthDep, db: OrgSession) -> MyAvailability:
+    return await requests.my_availability(db, ctx.org_id, ctx.user_id)
+
+
+@mine.put("/me/availability", response_model=AvailabilityOut)
+async def submit_availability(
+    body: AvailabilityIn, ctx: AuthDep, db: OrgSession
+) -> AvailabilityOut:
+    return await requests.submit_availability(db, ctx.org_id, ctx.user_id, body)
+
+
+@mine.get("/me/time-off", response_model=TimeOffList)
+async def my_time_off(ctx: AuthDep, db: OrgSession) -> TimeOffList:
+    return TimeOffList(data=await requests.my_time_off(db, ctx.org_id, ctx.user_id))
+
+
+@mine.post("/me/time-off", status_code=201, response_model=TimeOffOut)
+async def request_time_off(body: TimeOffIn, ctx: AuthDep, db: OrgSession) -> TimeOffOut:
+    return await requests.request_time_off(db, ctx.org_id, ctx.user_id, body)
+
+
+@mine.post("/me/time-off/{id}/cancel", response_model=TimeOffOut)
+async def cancel_time_off(id: uuid.UUID, ctx: AuthDep, db: OrgSession) -> TimeOffOut:
+    return await requests.cancel_time_off(db, ctx.org_id, ctx.user_id, id)
 
 
 @mine.get("/notifications", response_model=NotificationList)

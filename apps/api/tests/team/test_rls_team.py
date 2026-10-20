@@ -13,6 +13,7 @@ from tests.team.conftest import Clock, Connect, Connected, at, import_team
 TABLES = [
     "staff_members", "positions", "employee_positions", "stations", "employee_locations",
     "invitations", "schedules", "shifts", "published_shifts", "notifications",
+    "availability_sets", "availability_blocks", "time_off_requests",
 ]  # fmt: skip
 
 
@@ -60,6 +61,29 @@ async def two(connect: Connect, clock: Clock) -> tuple[Connected, Connected]:
                     "VALUES (:i, :o, :u, 'schedule_changed', 't')"
                 ),
                 {"i": uuid.uuid4(), "o": c.org_id, "u": c.user_id},
+            )
+            emp = await db.scalar(text("SELECT id FROM staff_members LIMIT 1"))
+            p = {"o": c.org_id, "u": c.user_id, "e": emp, "s": uuid.uuid4()}
+            await db.execute(
+                text(
+                    "INSERT INTO time_off_requests (id, org_id, employee_id, starts_on, ends_on, "
+                    "created_by) VALUES (gen_random_uuid(), :o, :e, '2026-03-14', '2026-03-14', :u)"
+                ),
+                p,
+            )
+            await db.execute(
+                text(
+                    "INSERT INTO availability_sets (id, org_id, employee_id, effective_from, "
+                    "submitted_by) VALUES (:s, :o, :e, '2026-03-09', :u)"
+                ),
+                p,
+            )
+            await db.execute(
+                text(
+                    "INSERT INTO availability_blocks (id, org_id, set_id, weekday) "
+                    "VALUES (gen_random_uuid(), :o, :s, 5)"
+                ),
+                p,
             )
     return a, b
 

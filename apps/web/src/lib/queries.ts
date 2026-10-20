@@ -14,11 +14,14 @@ import type {
   Location,
   MappingCandidate,
   MappingIssue,
+  MyAvailability,
   NotificationList,
   Position,
+  RequestsInbox,
   ScheduleResponse,
   SousStatus,
   Station,
+  TimeOff,
   SummaryResponse,
   TodayResponse,
 } from "./types";
@@ -45,6 +48,9 @@ export const keys = {
   team: ["team"] as const,
   notifications: ["notifications"] as const,
   myWeek: (week: string) => ["me", "week", week] as const,
+  myTimeOff: ["me", "time-off"] as const,
+  myAvailability: ["me", "availability"] as const,
+  requests: (loc: string, status: string) => ["team", "requests", loc, status] as const,
 };
 
 export function useLocations() {
@@ -249,4 +255,26 @@ export function useHasEmployeeProfile(): boolean {
     staleTime: 10 * 60_000,
   });
   return q.isSuccess;
+}
+
+// ---- Availability and time off ----
+
+export function useMyTimeOff() {
+  return useQuery({
+    queryKey: keys.myTimeOff,
+    queryFn: async () => (await api<List<TimeOff>>("/v1/me/time-off")).data,
+  });
+}
+
+export function useMyAvailability() {
+  return useQuery({ queryKey: keys.myAvailability, queryFn: () => api<MyAvailability>("/v1/me/availability") });
+}
+
+export function useRequestsInbox(locationId: string | undefined, status: "pending" | "history") {
+  return useQuery({
+    queryKey: keys.requests(locationId ?? "", status),
+    queryFn: () => api<RequestsInbox>("/v1/team/requests", { query: { location_id: locationId, status } }),
+    enabled: !!locationId,
+    refetchInterval: status === "pending" ? 60_000 : false,
+  });
 }

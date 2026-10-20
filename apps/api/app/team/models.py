@@ -8,7 +8,7 @@ and sits under RLS.
 """
 
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 
 from sqlalchemy import (
@@ -20,7 +20,9 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     String,
+    Time,
     UniqueConstraint,
     Uuid,
     text,
@@ -304,3 +306,86 @@ class Notification(Base):
         DateTime(timezone=True), default=_now, server_default=_NOW
     )
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+
+class AvailabilitySet(Base):
+    """A weekly availability an employee submitted. The approved set with the latest
+    `effective_from` on or before a date applies to that date; a new submission supersedes a
+    pending one."""
+
+    __tablename__ = "availability_sets"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'rejected', 'superseded')", name="status"
+        ),
+        Index("ix_availability_sets_employee_id_status", "employee_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=new_id)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
+    employee_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("staff_members.id"))
+    status: Mapped[str] = mapped_column(String, default="pending", server_default="pending")
+    effective_from: Mapped[date] = mapped_column(Date)
+    note: Mapped[str] = mapped_column(String, default="", server_default="")
+    submitted_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    submitted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, server_default=_NOW
+    )
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), default=None)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    decision_note: Mapped[str | None] = mapped_column(String, default=None)
+
+
+class AvailabilityBlock(Base):
+    """An unavailable window on a weekday (0 = Monday), in location-local time. Null times mean
+    the whole day."""
+
+    __tablename__ = "availability_blocks"
+    __table_args__ = (
+        CheckConstraint("weekday BETWEEN 0 AND 6", name="weekday"),
+        CheckConstraint(
+            "(start_time IS NULL AND end_time IS NULL) OR "
+            "(start_time IS NOT NULL AND end_time IS NOT NULL AND start_time < end_time)",
+            name="window",
+        ),
+        Index("ix_availability_blocks_set_id", "set_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=new_id)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
+    set_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("availability_sets.id", ondelete="CASCADE")
+    )
+    weekday: Mapped[int] = mapped_column(SmallInteger)
+    start_time: Mapped[time | None] = mapped_column(Time, default=None)
+    end_time: Mapped[time | None] = mapped_column(Time, default=None)
+
+
+class TimeOffRequest(Base):
+    """Dates are inclusive. `start_time` applies to the first day and `end_time` to the last;
+    null means from the start / to the end of that day (location-local)."""
+
+    __tablename__ = "time_off_requests"
+    __table_args__ = (
+        CheckConstraint("status IN ('pending', 'approved', 'denied', 'cancelled')", name="status"),
+        CheckConstraint("ends_on >= starts_on", name="dates"),
+        Index("ix_time_off_requests_employee_id_starts_on", "employee_id", "starts_on"),
+        Index("ix_time_off_requests_org_id_status", "org_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=new_id)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
+    employee_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("staff_members.id"))
+    starts_on: Mapped[date] = mapped_column(Date)
+    ends_on: Mapped[date] = mapped_column(Date)
+    start_time: Mapped[time | None] = mapped_column(Time, default=None)
+    end_time: Mapped[time | None] = mapped_column(Time, default=None)
+    reason: Mapped[str] = mapped_column(String, default="", server_default="")
+    status: Mapped[str] = mapped_column(String, default="pending", server_default="pending")
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, server_default=_NOW
+    )
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), default=None)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    decision_note: Mapped[str | None] = mapped_column(String, default=None)

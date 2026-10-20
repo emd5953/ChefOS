@@ -419,3 +419,55 @@ export type MyWeek = {
   my_shifts: MyShift[];
   team_shifts: TeamShift[];
 };
+
+// ---- Availability and time off ----
+/** An unavailable window on a weekday (0 = Monday), location-local. No times = all day. */
+export type AvailabilityBlock = { weekday: number; start_time: string | null; end_time: string | null };
+export type AvailabilitySet = {
+  id: string;
+  employee_id: string;
+  employee_name: string | null;
+  status: "pending" | "approved" | "rejected" | "superseded";
+  effective_from: string;
+  note: string;
+  blocks: AvailabilityBlock[];
+  submitted_at: string;
+  decided_at: string | null;
+  decision_note: string | null;
+};
+export type MyAvailability = {
+  current: AvailabilitySet | null;
+  pending: AvailabilitySet | null;
+  upcoming: AvailabilitySet[];
+};
+export type TimeOffStatus = "pending" | "approved" | "denied" | "cancelled";
+export type TimeOff = {
+  id: string;
+  employee_id: string;
+  employee_name: string | null;
+  starts_on: string;
+  ends_on: string;
+  start_time: string | null;
+  end_time: string | null;
+  reason: string;
+  status: TimeOffStatus;
+  created_at: string;
+  decided_at: string | null;
+  decision_note: string | null;
+  overlapping_shifts: Array<{
+    id: string;
+    location_id: string;
+    business_date: string;
+    starts_at: string;
+    ends_at: string;
+    position_name: string;
+  }>;
+};
+export type TimeOffIn = {
+  starts_on: string;
+  ends_on: string;
+  start_time?: string | null;
+  end_time?: string | null;
+  reason?: string;
+};
+export type RequestsInbox = { time_off: TimeOff[]; availability: AvailabilitySet[] };

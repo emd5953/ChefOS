@@ -1,6 +1,6 @@
 # Team (Phase 3)
 
-**Status:** In progress (T1–T4 built) · **Last updated:** 2026-10-20
+**Status:** Built (T1–T5) · see Implementation notes · **Last updated:** 2026-10-20
 **Related:** [PRD](../prd.md) (TEAM-1 to TEAM-4, MOB-1), [Roadmap](../roadmap.md), [Architecture](../architecture.md), [Integration layer](integration-layer.md), [ADR 0002](../adr/0002-production-stack.md)
 
 ## Problem
@@ -72,8 +72,9 @@ notifications(id, org_id, user_id, kind, title, body, link, entity_type, entity_
 -- 0008
 availability_sets(id, org_id, employee_id, status ('pending'|'approved'|'rejected'|'superseded'),
   effective_from date, note, submitted_by, submitted_at, decided_by, decided_at, decision_note)
-availability_blocks(org_id, set_id, weekday smallint, start_time null, end_time null)
-  -- unavailable windows, location-local; null times = all day
+availability_blocks(id, org_id, set_id, weekday smallint, start_time null, end_time null)
+  -- unavailable windows, location-local, weekday 0 = Monday; null times = all day;
+  -- otherwise start_time < end_time within the day
 time_off_requests(id, org_id, employee_id, starts_on date, ends_on date, start_time null,
   end_time null, reason, status ('pending'|'approved'|'denied'|'cancelled'),
   created_at, decided_by, decided_at, decision_note)
@@ -124,13 +125,14 @@ POST   /v1/team/schedule/copy?location_id&week_start ← { from_week_start }   (
 POST   /v1/team/schedule/publish?location_id&week_start ← { expected_version, acknowledge_conflicts }
        → { published_version, changed, changed_employees, notified_users, employees_without_login }
 
-GET    /v1/team/requests?location_id&status=pending        → { time_off: [...], availability: [...] }
+GET    /v1/team/requests?location_id&status=pending|history → { time_off: [...], availability: [...] }
 POST   /v1/team/time-off/{id}/decide      ← { decision: approve|deny, note? }
 POST   /v1/team/availability/{id}/decide  ← { decision: approve|reject, note? }
 
 GET    /v1/me/week?week_start   → { week_start, employee, published_at, locations,
                                    my_shifts, team_shifts (name, position, times only) }   week_start defaults to this week
-GET    /v1/me/availability      PUT /v1/me/availability ← { effective_from, blocks[], note? } → pending set
+GET    /v1/me/availability → { current, pending, upcoming }
+PUT    /v1/me/availability ← { effective_from, blocks[], note? } → pending set
 GET    /v1/me/time-off          POST /v1/me/time-off ← { starts_on, ends_on, start_time?, end_time?, reason? }
 POST   /v1/me/time-off/{id}/cancel
 GET    /v1/notifications?unread_only    POST /v1/notifications/read ← { ids? , all? }
@@ -218,6 +220,17 @@ Why: it reuses cookie sessions, CSRF, `api.ts`, the query layer, types, and the 
 7. **Invitation tests:** single use, expiry, revoke, hashed token at rest, accept throttled like login, accept creates membership, `location_access`, and the employee link atomically.
 8. **Audit test:** each mutating route writes the expected `entity_type`/`action` in the same transaction (rollback leaves none).
 9. **Web:** `lint`, `typecheck`, `build` in CI. Manual walkthrough of the happy path at 390 px width (devtools device mode) and desktop, including the offline banner.
+
+## Implementation notes
+
+Decisions made while building, where the spec above was silent or ambiguous. The sections above were updated to match.
+
+- **Modules.** `app/team/` also has `invitations.py`, `schedule.py` (builder, projections, conflicts, copy, publish), `me.py`, `requests.py` (availability and time off, plus the builder's time-off and availability conflict checks, registered into `schedule.CONFLICT_HOOKS` so `schedule` never imports `requests`), and `demo.py`.
+- **Builder conflicts** for availability use the approved set in effect on the shift's business date and check every local calendar day the shift touches (an overnight shift can hit the next day's block). Time off is checked against the shift's actual interval in the location's zone. Pending availability doesn't flag shifts; pending time off does (`time_off_pending`).
+- **Request dates** are checked against today's business date at the employee's first location (org timezone if none). Time-off requests are capped at 62 days. Employees may cancel pending or approved time off that hasn't ended; cancelling doesn't notify managers (it is audited).
+- **Requests inbox** has `status=pending|history`. History is decided requests (and approved/rejected availability), newest first.
+- **Merge** also repoints shifts, published shifts, availability sets, and time-off requests.
+- **Web build in a git worktree.** Turbopack can't resolve `next` through a symlinked `node_modules`; use a real install in the worktree.
 
 ## Risks / open questions
 

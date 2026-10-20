@@ -43,8 +43,8 @@ async def my_location_ids(db: AsyncSession, employee_id: uuid.UUID) -> set[uuid.
     )
 
 
-async def current_week(db: AsyncSession, org_id: uuid.UUID, location_ids: set[uuid.UUID]) -> date:
-    """Monday of today's business week at the employee's first location (else the org zone)."""
+async def local_today(db: AsyncSession, org_id: uuid.UUID, location_ids: set[uuid.UUID]) -> date:
+    """Today's business date at the employee's first location (else in the org's zone)."""
     loc = (
         await db.scalar(
             select(Location).where(Location.id.in_(location_ids)).order_by(Location.created_at)
@@ -53,10 +53,14 @@ async def current_week(db: AsyncSession, org_id: uuid.UUID, location_ids: set[uu
         else None
     )
     if loc is not None:
-        today = business_date(datetime.now(UTC), loc.timezone, loc.business_day_start)
-    else:
-        org = await db.get_one(Organization, org_id)
-        today = business_date(datetime.now(UTC), org.timezone)
+        return business_date(datetime.now(UTC), loc.timezone, loc.business_day_start)
+    org = await db.get_one(Organization, org_id)
+    return business_date(datetime.now(UTC), org.timezone)
+
+
+async def current_week(db: AsyncSession, org_id: uuid.UUID, location_ids: set[uuid.UUID]) -> date:
+    """Monday of today's business week at the employee's location."""
+    today = await local_today(db, org_id, location_ids)
     return today - timedelta(days=today.weekday())
 
 

@@ -274,6 +274,16 @@ type Schedule = {
 - **Publish** runs in one transaction: lock the schedule, check `expected_version` (`409 schedule_changed` if stale; refetch), copy the draft into the published snapshot, and alert only employees whose published shifts were added, removed, moved, or reassigned (shifts that already ended are ignored). The first publish of a week sends `schedule_published`; later ones send `schedule_changed` with a summary ("Fri moved to 5pm-11pm"). Overlaps block publishing (`409 shift_overlap`); any other conflict needs `acknowledge_conflicts: true` (`409 conflicts_unacknowledged`). Republishing an unchanged week is a no-op (`changed: false`, no alerts). Employees without a login are published but listed in `employees_without_login`.
 - **Copy** keeps local wall-clock times (DST-safe). Inactive employees, and employees who already work elsewhere at the copied time, are copied as unassigned.
 
+### Requests inbox (managers)
+
+| Method | Path | Body | Response |
+| --- | --- | --- | --- |
+| GET | `/v1/team/requests?location_id&status=pending\|history` | none | `200 { time_off: TimeOff[], availability: Availability[] }` for employees the caller manages (at `location_id` if given). Pending oldest first; history (decided) newest first |
+| POST | `/v1/team/time-off/{id}/decide` | `{ decision: "approve" \| "deny", note? }` | `200 TimeOff`. `409` if not pending |
+| POST | `/v1/team/availability/{id}/decide` | `{ decision: "approve" \| "reject", note? }` | `200 Availability`. `409` if not pending |
+
+Each pending time-off item lists the published shifts it overlaps (`overlapping_shifts`). Approving never deletes shifts: the builder flags them (`time_off_approved`; `time_off_pending` while undecided; `unavailable` against the employee's approved availability). Decisions notify the employee.
+
 ### Positions and stations
 
 | Method | Path | Body | Response |
@@ -294,6 +304,11 @@ Any signed-in role. `/v1/me/*` resolves the employee from the session's user (ne
 | GET | `/v1/me/week?week_start` | none | `200 MyWeek`. `week_start` defaults to the current week at the employee's location |
 | GET | `/v1/notifications?unread_only` | none | `200 { data: Notification[] /* newest 50 */, unread_count }` |
 | POST | `/v1/notifications/read` | `{ ids?: string[], all?: boolean }` | `200 { unread_count }`. Only the caller's own notifications |
+| GET | `/v1/me/availability` | none | `200 { current: Availability \| null, pending: Availability \| null, upcoming: Availability[] }` |
+| PUT | `/v1/me/availability` | `{ effective_from, blocks: Block[], note? }` | `200 Availability` (`pending`; replaces a pending one, which becomes `superseded`). `effective_from` today or later |
+| GET | `/v1/me/time-off` | none | `200 { data: TimeOff[] }` (own requests, newest first) |
+| POST | `/v1/me/time-off` | `{ starts_on, ends_on, start_time?, end_time?, reason? }` | `201 TimeOff`. `422` if it starts in the past or `ends_on < starts_on` |
+| POST | `/v1/me/time-off/{id}/cancel` | none | `200 TimeOff`. Pending or approved and not over; another employee's id is `404` |
 
 ```ts
 type MyWeek = { week_start: string; employee: { id: string; display_name: string };
@@ -311,6 +326,21 @@ type Notification = { id: string; kind: "schedule_published" | "schedule_changed
                       entity_type: string | null; entity_id: string | null;
                       created_at: string; read_at: string | null }
 ```
+
+```ts
+type Block = { weekday: number /* 0 = Monday */; start_time: string | null; end_time: string | null }  // unavailable; no times = all day
+type Availability = { id: string; employee_id: string; employee_name: string | null;
+                      status: "pending" | "approved" | "rejected" | "superseded"; effective_from: string;
+                      note: string; blocks: Block[]; submitted_at: string; decided_at: string | null;
+                      decision_note: string | null }
+type TimeOff = { id: string; employee_id: string; employee_name: string | null; starts_on: string; ends_on: string;
+                 start_time: string | null /* on the first day */; end_time: string | null /* on the last day */;
+                 reason: string; status: "pending" | "approved" | "denied" | "cancelled"; created_at: string;
+                 decided_at: string | null; decision_note: string | null;
+                 overlapping_shifts: Array<{ id; location_id; business_date; starts_at; ends_at; position_name }> }
+```
+
+Times on requests are location-local wall clock (`HH:MM`). The approved availability with the latest `effective_from` on or before a date applies to that date. Submitting availability or time off notifies the employee's managers (owners/admins and managers of their locations).
 
 `MyWeek` reads only the published snapshot: draft edits are invisible until the next publish. Notifications are in-app only; clients poll every 60 s while visible and on focus.
 

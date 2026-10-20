@@ -375,6 +375,8 @@ MERGE_REPOINT: list[tuple[str, str]] = [
     ("timecards", "staff_member_id"),
     ("shifts", "employee_id"),
     ("published_shifts", "employee_id"),
+    ("availability_sets", "employee_id"),
+    ("time_off_requests", "employee_id"),
 ]
 
 

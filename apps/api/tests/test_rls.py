@@ -24,7 +24,8 @@ INTEGRATION_RLS_TABLES = {
 # Team tables (behavior is covered in tests/team/test_rls_team.py).
 TEAM_RLS_TABLES = {
     "positions", "employee_positions", "stations", "employee_locations", "invitations",
-    "schedules", "shifts", "published_shifts", "notifications",
+    "schedules", "shifts", "published_shifts", "notifications", "availability_sets",
+    "availability_blocks", "time_off_requests",
 }  # fmt: skip
 # Tables with an org_id column that are intentionally NOT under RLS (accessed only by auth code
 # before org scope exists). Adding to this set requires a reason.

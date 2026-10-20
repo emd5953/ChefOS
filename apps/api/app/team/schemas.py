@@ -1,6 +1,6 @@
 import re
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -9,7 +9,9 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    field_serializer,
     field_validator,
+    model_validator,
 )
 
 from app.identity.schemas import Email, Name
@@ -454,3 +456,129 @@ class MyWeek(BaseModel):
     locations: list[MyLocation]
     my_shifts: list[MyShift]
     team_shifts: list[TeamShift]
+
+
+# ---------------------------------------------------------------- availability and time off
+
+Reason = Annotated[str, Field(max_length=500)]
+
+
+def _hhmm(value: time | None) -> str | None:
+    return value.strftime("%H:%M") if value is not None else None
+
+
+class Block(BaseModel):
+    """An unavailable window on a weekday (0 = Monday), location-local. No times = all day."""
+
+    model_config = ConfigDict(from_attributes=True)
+    weekday: Annotated[int, Field(ge=0, le=6)]
+    start_time: time | None = None
+    end_time: time | None = None
+
+    @model_validator(mode="after")
+    def _window(self) -> Block:
+        if (self.start_time is None) != (self.end_time is None):
+            raise ValueError("Give both start_time and end_time, or neither (all day)")
+        if (
+            self.start_time is not None
+            and self.end_time is not None
+            and self.start_time >= self.end_time
+        ):
+            raise ValueError("end_time must be after start_time")
+        return self
+
+    @field_serializer("start_time", "end_time")
+    def _ser(self, value: time | None) -> str | None:
+        return _hhmm(value)
+
+
+class AvailabilityIn(BaseModel):
+    effective_from: date
+    blocks: Annotated[list[Block], Field(max_length=50)]
+    note: Reason = ""
+
+
+class AvailabilityOut(BaseModel):
+    id: uuid.UUID
+    employee_id: uuid.UUID
+    employee_name: str | None = None
+    status: Literal["pending", "approved", "rejected", "superseded"]
+    effective_from: date
+    note: str
+    blocks: list[Block]
+    submitted_at: datetime
+    decided_at: datetime | None
+    decision_note: str | None
+
+
+class MyAvailability(BaseModel):
+    current: AvailabilityOut | None  # the approved set in effect today
+    pending: AvailabilityOut | None
+    upcoming: list[AvailabilityOut]  # approved, effective later
+
+
+class TimeOffIn(BaseModel):
+    starts_on: date
+    ends_on: date
+    start_time: time | None = None  # on the first day; null = from the start of the day
+    end_time: time | None = None  # on the last day; null = to the end of the day
+    reason: Reason = ""
+
+    @model_validator(mode="after")
+    def _range(self) -> TimeOffIn:
+        if self.ends_on < self.starts_on:
+            raise ValueError("ends_on must be on or after starts_on")
+        if (self.ends_on - self.starts_on).days > 62:
+            raise ValueError("Time off requests are limited to 62 days")
+        if (
+            self.starts_on == self.ends_on
+            and self.start_time is not None
+            and self.end_time is not None
+            and self.start_time >= self.end_time
+        ):
+            raise ValueError("end_time must be after start_time")
+        return self
+
+
+class ShiftRef(BaseModel):
+    id: uuid.UUID
+    location_id: uuid.UUID
+    business_date: date
+    starts_at: datetime
+    ends_at: datetime
+    position_name: str
+
+
+class TimeOffOut(BaseModel):
+    id: uuid.UUID
+    employee_id: uuid.UUID
+    employee_name: str | None = None
+    starts_on: date
+    ends_on: date
+    start_time: time | None
+    end_time: time | None
+    reason: str
+    status: Literal["pending", "approved", "denied", "cancelled"]
+    created_at: datetime
+    decided_at: datetime | None
+    decision_note: str | None
+    # Manager inbox only: published shifts the time off overlaps.
+    overlapping_shifts: list[ShiftRef] = []
+
+    @field_serializer("start_time", "end_time")
+    def _ser(self, value: time | None) -> str | None:
+        return _hhmm(value)
+
+
+class TimeOffList(BaseModel):
+    data: list[TimeOffOut]
+
+
+class RequestsOut(BaseModel):
+    time_off: list[TimeOffOut]
+    availability: list[AvailabilityOut]
+
+
+class Decision(BaseModel):
+    decision: Literal["approve", "deny", "reject"]
+    note: Reason | None = None

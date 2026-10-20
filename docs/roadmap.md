@@ -13,7 +13,7 @@ As of 2026-10-20:
 - **Phase 1:** M1–M5 done in simulated mode. Real-sandbox mode is untested.
 - **Phase 2:** done. Commerce views built, marketing site moved into `apps/web`, prototype deleted.
 - **Phase 5:** Sous read-only built ahead of order over Commerce data (milestones 1–4). The eval set passes 39/40 on qwen3:8b. Team and Inventory tools follow their modules.
-- **Phase 3:** in progress ([spec](specs/team.md)). T1 (employees and positions), T2 (logins and roles), T3 (schedule builder and forecast), and T4 (publish, alerts, employee mobile view; [ADR 0004](adr/0004-mobile-as-responsive-web.md)) done.
+- **Phase 3:** done ([spec](specs/team.md), T1–T5). Employees from Square, logins by invitation, schedule builder with forecast and projected labor %, publish with change alerts, availability and time off with approvals, and an employee mobile view at `/my` ([ADR 0004](adr/0004-mobile-as-responsive-web.md)). Seeded by `make demo`.
 - **Phases 4, 6:** not started.
 - **Prototype workspace:** deleted from `main`. UX reference at tag `prototype-v0`; run it with `git worktree add ../chefos-prototype prototype-v0 && cd ../chefos-prototype && python3 server.py`.
 
@@ -43,9 +43,9 @@ Web app shell with the marketing site moved in. Commerce daily and date-range vi
 
 ## Phase 3: Team (P0), can start during Phase 2
 
-Employees linked to POS team members, schedule builder with projected labor cost against forecast sales, publish, availability and time off with approvals, mobile employee app. TEAM-1 to TEAM-4, MOB-1.
+[Spec](specs/team.md). Employees linked to POS team members, schedule builder with projected labor cost against forecast sales, publish, availability and time off with approvals, mobile employee view (a responsive web view, [ADR 0004](adr/0004-mobile-as-responsive-web.md)). TEAM-1 to TEAM-4, MOB-1.
 
-**Exit:** a GM builds and publishes a week's schedule against forecast. Employees see it on mobile, and time-off requests flow through approval.
+**Exit:** a GM builds and publishes a week's schedule against forecast. Employees see it on mobile, and time-off requests flow through approval. Met 2026-10-20 (`tests/team/test_exit_criterion.py` runs it on seeded data).
 
 ## Phase 4: Inventory core (P0/P1)
 
