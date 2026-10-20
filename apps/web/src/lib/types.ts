@@ -102,7 +102,7 @@ export type Totals = {
 };
 
 // ---- Auth ----
-export type Session = { user: User; org: Org; role: Role; csrf_token: string };
+export type Session = { user: User; org: Org; role: Role; csrf_token: string; has_employee: boolean };
 export type SignupResponse = Session & { location: Location };
 export type SignupBody = {
   email: string;

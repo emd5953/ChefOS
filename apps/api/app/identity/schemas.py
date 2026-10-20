@@ -107,6 +107,7 @@ class SessionOut(BaseModel):
     org: OrgOut
     role: str
     csrf_token: str
+    has_employee: bool = False
 
 
 class SignupOut(SessionOut):

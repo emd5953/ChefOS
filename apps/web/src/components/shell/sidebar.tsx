@@ -10,7 +10,6 @@ import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@/components/ui/menu";
 import { cn } from "@/lib/cn";
 import { useSession } from "@/lib/auth";
 import { useLocationScope } from "@/lib/location-scope";
-import { useHasEmployeeProfile } from "@/lib/queries";
 import { useLogout } from "@/lib/use-logout";
 
 type NavItem = { label: string; path: string; icon: ComponentType<{ className?: string }>; exact?: boolean; soon?: boolean };
@@ -27,11 +26,10 @@ const NAV: NavItem[] = [
 ];
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
-  const { user, org, role } = useSession();
+  const { user, org, role, has_employee: hasProfile } = useSession();
   const pathname = usePathname();
   const scope = useLocationScope();
   const logout = useLogout();
-  const hasProfile = useHasEmployeeProfile();
 
   return (
     <div className="flex h-full flex-col px-4 py-5">

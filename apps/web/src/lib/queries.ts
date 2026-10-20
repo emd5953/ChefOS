@@ -246,17 +246,6 @@ export function useNotifications(enabled = true) {
   });
 }
 
-/** Whether the signed-in user has an employee record (managers who also work shifts). */
-export function useHasEmployeeProfile(): boolean {
-  const q = useQuery({
-    queryKey: ["me", "profile"],
-    queryFn: () => api<unknown>("/v1/me/week"),
-    retry: false,
-    staleTime: 10 * 60_000,
-  });
-  return q.isSuccess;
-}
-
 // ---- Availability and time off ----
 
 export function useMyTimeOff() {

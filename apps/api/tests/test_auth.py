@@ -37,6 +37,7 @@ async def test_signup_login_me_logout_round_trip(
     assert me.status_code == 200
     assert me.json()["user"]["email"] == acct["user"]["email"]
     assert me.json()["csrf_token"] == acct["csrf_token"]
+    assert me.json()["has_employee"] is False
 
     locs = await c.get("/v1/locations")
     assert [loc["name"] for loc in locs.json()["data"]] == ["Main"]
