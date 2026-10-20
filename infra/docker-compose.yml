@@ -32,7 +32,7 @@ services:
     environment:
       POSTGRES_PASSWORD: postgres
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -48,8 +48,8 @@ services:
     user: "0:0"
     command: ["server", "start-dev", "--ip", "0.0.0.0", "--db-filename", "/data/temporal.db"]
     ports:
-      - "7233:7233"
-      - "8233:8233"
+      - "127.0.0.1:7233:7233"
+      - "127.0.0.1:8233:8233"
     volumes:
       - temporal-data:/data
     healthcheck:
@@ -67,8 +67,8 @@ services:
       RUSTFS_ACCESS_KEY: chefos
       RUSTFS_SECRET_KEY: chefos-dev-secret
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio-data:/data
 
@@ -100,14 +100,14 @@ services:
   jaeger:
     image: jaegertracing/jaeger:2.10.0
     ports:
-      - "16686:16686"
+      - "127.0.0.1:16686:16686"
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.136.0
     command: ["--config=/etc/otelcol/config.yaml"]
     ports:
-      - "4317:4317"
-      - "4318:4318"
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
     volumes:
       - ./otel-collector.yaml:/etc/otelcol/config.yaml:ro
     depends_on:
@@ -117,7 +117,7 @@ services:
     <<: *api-base
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--reload", "--reload-dir", "app"]
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=2)"]
       interval: 3s

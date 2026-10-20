@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.config import get_settings
 from app.db import scoped_session
 from app.main import app
-from app.security import passwords
+from app.security import passwords, throttle
 from tests.conftest import PASSWORD, SignupFn
 
 
@@ -224,6 +224,71 @@ async def test_login_for_unknown_email_still_runs_argon2(
     assert r.status_code == 401
     assert seen == [passwords.DUMMY_HASH]
     assert passwords.DUMMY_HASH.startswith("$argon2id$")
+
+
+async def _fail_login(client: httpx.AsyncClient, email: str, times: int) -> None:
+    for _ in range(times):
+        r = await client.post("/v1/auth/login", json={"email": email, "password": "nope-nope-nope"})
+        _problem(r, 401, "unauthenticated")
+
+
+async def test_login_locks_email_after_too_many_failures(
+    signup: SignupFn, client: httpx.AsyncClient
+) -> None:
+    email = (await signup())["user"]["email"]
+    await _fail_login(client, email, throttle.EMAIL_LIMIT)
+
+    # Even the right password is refused until the window ends, and Argon2 isn't run.
+    r = await client.post("/v1/auth/login", json={"email": email, "password": PASSWORD})
+    body = _problem(r, 429, "rate_limited")
+    assert body["detail"] == "Too many failed sign-in attempts. Try again later."
+    assert 0 < int(r.headers["retry-after"]) <= throttle.WINDOW.total_seconds()
+
+
+async def test_unknown_email_locks_the_same_way(client: httpx.AsyncClient) -> None:
+    await _fail_login(client, "ghost-lock@example.com", throttle.EMAIL_LIMIT)
+    r = await client.post(
+        "/v1/auth/login", json={"email": "ghost-lock@example.com", "password": "whatever-pass-1"}
+    )
+    _problem(r, 429, "rate_limited")
+
+
+async def test_successful_login_resets_the_email_counter(
+    signup: SignupFn, client: httpx.AsyncClient
+) -> None:
+    email = (await signup())["user"]["email"]
+    await _fail_login(client, email, throttle.EMAIL_LIMIT - 1)
+    ok = await client.post("/v1/auth/login", json={"email": email, "password": PASSWORD})
+    assert ok.status_code == 200
+    await _fail_login(client, email, throttle.EMAIL_LIMIT - 1)
+
+
+async def test_lock_expires_with_the_window(
+    signup: SignupFn, client: httpx.AsyncClient, owner_engine: AsyncEngine
+) -> None:
+    email = (await signup())["user"]["email"]
+    await _fail_login(client, email, throttle.EMAIL_LIMIT)
+    async with owner_engine.begin() as conn:
+        await conn.execute(
+            text(
+                "UPDATE login_throttle SET window_started_at = window_started_at - CAST(:d AS interval)"
+            ),
+            {"d": throttle.WINDOW + timedelta(seconds=1)},
+        )
+    r = await client.post("/v1/auth/login", json={"email": email, "password": PASSWORD})
+    assert r.status_code == 200, r.text
+
+
+async def test_login_locks_ip_across_emails(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(throttle, "IP_LIMIT", 3)
+    for i in range(3):
+        await _fail_login(client, f"spray-{i}@example.com", 1)
+    r = await client.post(
+        "/v1/auth/login", json={"email": "spray-new@example.com", "password": "nope-nope-nope"}
+    )
+    _problem(r, 429, "rate_limited")
 
 
 async def test_signup_duplicate_email_is_409(signup: SignupFn, client: httpx.AsyncClient) -> None:

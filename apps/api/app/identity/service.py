@@ -23,7 +23,7 @@ from app.identity.schemas import (
     SignupRequest,
 )
 from app.ids import new_id
-from app.security import passwords
+from app.security import passwords, throttle
 from app.security.models import SessionRecord
 from app.security.sessions import create_session
 
@@ -128,16 +128,23 @@ async def signup(
 
 async def login(email: str, password: str, *, user_agent: str | None, ip: str | None) -> LoggedIn:
     email = email.strip().lower()
+    limits = throttle.keys(email, ip)
+    now = datetime.now(UTC)
     async with unscoped_session() as db:
+        await throttle.check(db, limits, now)
         user = await db.scalar(select(User).where(User.email == email))
     # Always run Argon2 (against a dummy hash for unknown emails) so timing doesn't leak accounts.
     ok = await passwords.verify_password(
         user.password_hash if user else passwords.DUMMY_HASH, password
     )
     if user is None or not ok or user.disabled_at is not None:
+        # Own transaction: it must commit even though the request fails.
+        async with unscoped_session() as db:
+            await throttle.record_failure(db, limits, now)
         raise _BAD_LOGIN
 
     async with unscoped_session() as db:
+        await throttle.clear_email(db, email)
         # Memberships are RLS-protected; app.user_id allows the user to read their own rows.
         await set_scope(db, user_id=user.id)
         membership = await db.scalar(

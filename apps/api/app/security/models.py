@@ -33,3 +33,14 @@ class SessionRecord(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     user_agent: Mapped[str | None] = mapped_column(String, default=None)
     ip: Mapped[str | None] = mapped_column(String, default=None)
+
+
+class LoginThrottle(Base):
+    """Failed-login counters per key ("email:..." or "ip:..."), in fixed windows. No RLS: login
+    runs before any org scope exists."""
+
+    __tablename__ = "login_throttle"
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    failures: Mapped[int] = mapped_column(default=0)
+    window_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

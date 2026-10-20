@@ -55,6 +55,13 @@ async def owner_engine(migrated_db: None) -> AsyncIterator[AsyncEngine]:
     await engine.dispose()
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def _reset_login_throttle(owner_engine: AsyncEngine) -> None:
+    """Every test client shares one IP, so failed-login counters must not leak between tests."""
+    async with owner_engine.begin() as conn:
+        await conn.execute(text("DELETE FROM login_throttle"))
+
+
 @pytest_asyncio.fixture
 async def client() -> AsyncIterator[httpx.AsyncClient]:
     transport = httpx.ASGITransport(app=app)
