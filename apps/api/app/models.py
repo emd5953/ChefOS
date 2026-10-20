@@ -7,6 +7,7 @@ from app.audit import models as audit_models
 from app.commerce import models as commerce_models
 from app.identity import models as identity_models
 from app.integrations import models as integrations_models
+from app.inventory import models as inventory_models
 from app.security import models as security_models
 
 __all__ = [
@@ -14,5 +15,6 @@ __all__ = [
     "commerce_models",
     "identity_models",
     "integrations_models",
+    "inventory_models",
     "security_models",
 ]

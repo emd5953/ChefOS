@@ -63,7 +63,10 @@ class Membership(Base):
 
 class Location(Base):
     __tablename__ = "locations"
-    __table_args__ = (Index("ix_locations_org_id", "org_id"),)
+    __table_args__ = (
+        Index("ix_locations_org_id", "org_id"),
+        UniqueConstraint("org_id", "id", name="uq_locations_org_id_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=new_id)
     org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))

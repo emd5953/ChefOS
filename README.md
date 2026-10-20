@@ -13,7 +13,8 @@ Modules: **Team**, **Commerce**, **Inventory**. Shared capabilities: **Integrati
 | Square integration (M1–M5) | Built: simulated sandbox by default, real sandbox optional |
 | Commerce (Phase 2) | Built: overview, sales, menu items, freshness. Phase 2 is complete |
 | Sous (read-only) | Built: local model via Ollama, 5 Commerce tools, grounded answers, 40-case eval (`make sous-eval`) |
-| Team, Inventory | Not started ([roadmap](docs/roadmap.md)) |
+| Team | Not started ([roadmap](docs/roadmap.md)) |
+| Inventory (Phase 4) | In progress: catalog and stock foundation ([spec](docs/specs/inventory.md)) |
 | Marketing site | Served by the web app at `/` |
 
 ## Run the demo

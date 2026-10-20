@@ -20,6 +20,8 @@ INTEGRATION_RLS_TABLES = {
     "raw_records", "webhook_events", "external_refs", "mapping_issues", "menu_items",
     "menu_item_variants", "staff_members", "sales_orders", "sales_order_lines",
     "sales_order_returns", "timecards", "daily_sales", "daily_labor",
+    "suppliers", "inventory_items", "item_unit_conversions", "item_packs", "storage_areas",
+    "item_storage_assignments", "inventory_pars", "inventory_levels",
 }  # fmt: skip
 # Tables with an org_id column that are intentionally NOT under RLS (accessed only by auth code
 # before org scope exists). Adding to this set requires a reason.

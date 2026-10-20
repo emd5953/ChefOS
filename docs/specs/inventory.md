@@ -1,6 +1,6 @@
 # Inventory Core (Phase 4)
 
-**Status:** Proposed · **Owner:** TBD · **Last updated:** 2026-10-20
+**Status:** In progress · **Owner:** TBD · **Last updated:** 2026-10-20
 **Related:** [PRD](../prd.md), [Roadmap](../roadmap.md), [Architecture](../architecture.md), [Platform foundation](platform-foundation.md), [Integration layer](integration-layer.md)
 
 ## Problem
@@ -152,3 +152,8 @@ Each milestone leaves `main` usable and green in CI.
 3. **INV-3: Purchasing and receiving.** Snapshotted PO lines, ordered/received/closed quantities, partial receipts, explicit overage and reopen transitions, cost snapshots, and supplier/PO screens. Exit: manager can place, partially receive, close/reopen, and complete an order without double-counting.
 4. **INV-4: Recipes and plate cost.** Recipe editor, ingredient normalization, existing `menu_items.recipe_id` mapping, cost state, and plate-cost display. Exit: mapped menu item shows reproducible plate cost; unmapped or cost-incomplete items are explicit.
 5. **MOB-3: Mobile-first web workflows.** Responsive count and receiving routes in `apps/web`, with location scope mapping, touch-friendly entry, loading/empty/error states, and online retry. Exit: complete a count and receive flow at phone viewport; CI remains green.
+
+### Implementation notes
+
+- INV-1 is in progress. Revision `0009` adds the initial catalog, units, packs, suppliers, storage areas, pars, levels, and org RLS policies. The initial API supports item creation/editing, supplier and storage-area creation/listing, pack creation, item-area assignment, par updates, and a stock/par view. Item and pack archive/edit flows and storage-area/supplier updates remain before INV-1 exits. The web stock list is present; catalog editor screens remain outstanding.
+- Subsequent inventory revisions continue from `0009` in this checkout. At merge, the migration owner must re-chain `0009` after the final Phase 3 head as described above.

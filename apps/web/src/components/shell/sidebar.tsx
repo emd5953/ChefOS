@@ -21,7 +21,7 @@ const NAV: NavItem[] = [
   { label: "Integrations", path: "/app/integrations", icon: Plug },
   { label: "Locations", path: "/app/locations", icon: MapPin },
   { label: "Team", path: "/app/team", icon: Users, soon: true },
-  { label: "Inventory", path: "/app/inventory", icon: Package, soon: true },
+  { label: "Inventory", path: "/app/inventory", icon: Package },
 ];
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
