@@ -78,7 +78,12 @@ export type MappingIssue = {
   first_seen_at: string;
   last_seen_at: string;
   resolved_at: string | null;
+  resolution: "ignored" | "mapped" | null;
+  resolved_entity_id: string | null;
+  new_since_resolved: number;
+  mappable: boolean;
 };
+export type MappingCandidate = { id: string; label: string };
 
 export type Channel = "dine_in" | "pickup" | "delivery" | "online" | "other";
 

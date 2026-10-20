@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Stream = Literal["locations", "catalog", "orders", "team_members", "timecards"]
 
@@ -91,6 +91,10 @@ class MappingIssueOut(BaseModel):
     first_seen_at: datetime
     last_seen_at: datetime
     resolved_at: datetime | None
+    resolution: Literal["ignored", "mapped"] | None
+    resolved_entity_id: uuid.UUID | None
+    new_since_resolved: int
+    mappable: bool
 
 
 class MappingIssueList(BaseModel):
@@ -98,4 +102,22 @@ class MappingIssueList(BaseModel):
 
 
 class ResolveRequest(BaseModel):
-    ignore: bool
+    """Exactly one of: map to `entity_id`, or `ignore: true`."""
+
+    entity_id: uuid.UUID | None = None
+    ignore: bool = False
+
+    @model_validator(mode="after")
+    def _one_action(self) -> ResolveRequest:
+        if (self.entity_id is None) == (not self.ignore):
+            raise ValueError("Send either entity_id or ignore: true")
+        return self
+
+
+class MappingCandidate(BaseModel):
+    id: uuid.UUID
+    label: str
+
+
+class MappingCandidateList(BaseModel):
+    data: list[MappingCandidate]

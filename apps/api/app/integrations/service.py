@@ -13,15 +13,17 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.commerce.models import MenuItem, MenuItemVariant, StaffMember
 from app.config import get_settings
 from app.db import lookup_connection_owners, scoped_session
 from app.errors import ProblemError, not_found, validation_error
 from app.identity.models import Location
 from app.integrations import freshness, links, pipeline, sync, temporal
+from app.integrations.identity import add_refs
 from app.integrations.models import (
     STREAMS,
     IntegrationConnection,
@@ -38,6 +40,7 @@ from app.integrations.schemas import (
     ConnectionDetailOut,
     ConnectionOut,
     LocationLinkOut,
+    MappingCandidate,
     MappingIssueOut,
     StreamHealthOut,
     SyncRunOut,
@@ -354,7 +357,23 @@ async def list_issues(db: AsyncSession, status: str) -> list[MappingIssueOut]:
     return [_issue_out(i) for i in await db.scalars(stmt.limit(500))]
 
 
+# Kinds an owner can map to an existing record: issue kind -> external_refs entity type.
+_MAPPABLE = {"unmapped_item": "menu_item_variant", "unmapped_team_member": "staff_member"}
+
+_BACKFILL_LINES = text("""
+UPDATE sales_order_lines l SET menu_item_variant_id = :entity
+FROM sales_orders o
+WHERE o.id = l.order_id AND o.connection_id = :conn
+  AND l.external_item_ref = :ext AND l.menu_item_variant_id IS NULL
+""")
+_BACKFILL_TIMECARDS = text("""
+UPDATE timecards SET staff_member_id = :entity
+WHERE connection_id = :conn AND external_staff_ref = :ext AND staff_member_id IS NULL
+""")
+
+
 def _issue_out(i: MappingIssue) -> MappingIssueOut:
+    since = i.occurrences - i.occurrences_at_resolve if i.occurrences_at_resolve is not None else 0
     return MappingIssueOut(
         id=i.id,
         kind=i.kind,
@@ -364,18 +383,87 @@ def _issue_out(i: MappingIssue) -> MappingIssueOut:
         first_seen_at=i.first_seen_at,
         last_seen_at=i.last_seen_at,
         resolved_at=i.resolved_at,
+        resolution=i.resolution,
+        resolved_entity_id=i.resolved_entity_id,
+        new_since_resolved=max(0, since),
+        mappable=i.kind in _MAPPABLE,
     )
 
 
-async def resolve_issue_ignore(
-    db: AsyncSession, issue_id: uuid.UUID, user_id: uuid.UUID
-) -> MappingIssueOut:
+async def _get_issue(db: AsyncSession, issue_id: uuid.UUID) -> MappingIssue:
     issue = await db.get(MappingIssue, issue_id)
     if issue is None:
         raise not_found("Mapping issue not found")
-    if issue.resolved_at is None:
-        issue.resolved_at = datetime.now(UTC)
-        issue.resolved_by = user_id
+    return issue
+
+
+def _variant_detail(name: str) -> str | None:
+    return None if name == "Regular" else name  # single-variant items read as the item name
+
+
+def _join(name: str, detail: str | None) -> str:
+    return f"{name} · {detail}" if detail else name
+
+
+async def mapping_candidates(db: AsyncSession, issue_id: uuid.UUID) -> list[MappingCandidate]:
+    """What an issue can be mapped to: active menu item variants or staff members (org-scoped)."""
+    issue = await _get_issue(db, issue_id)
+    if issue.kind == "unmapped_item":
+        rows = await db.execute(
+            select(MenuItemVariant.id, MenuItem.name, MenuItemVariant.name.label("variant"))
+            .join(MenuItem, MenuItem.id == MenuItemVariant.menu_item_id)
+            .where(MenuItem.active, MenuItemVariant.active)
+            .order_by(MenuItem.name, MenuItemVariant.name)
+        )
+        return [
+            MappingCandidate(id=r.id, label=_join(r.name, _variant_detail(r.variant))) for r in rows
+        ]
+    if issue.kind == "unmapped_team_member":
+        staff = await db.scalars(
+            select(StaffMember).where(StaffMember.active).order_by(StaffMember.display_name)
+        )
+        return [MappingCandidate(id=m.id, label=_join(m.display_name, m.job_title)) for m in staff]
+    raise validation_error({"kind": "This kind of issue can't be mapped"})
+
+
+async def resolve_issue(
+    db: AsyncSession,
+    org_id: uuid.UUID,
+    issue_id: uuid.UUID,
+    user_id: uuid.UUID,
+    *,
+    entity_id: uuid.UUID | None,
+) -> MappingIssueOut:
+    """Map the issue to `entity_id` (backfilling existing rows), or ignore it when None."""
+    issue = await _get_issue(db, issue_id)
+    if entity_id is None:
+        if issue.resolved_at is None:
+            issue.resolved_at = datetime.now(UTC)
+            issue.resolved_by = user_id
+            issue.resolution = "ignored"
+            issue.occurrences_at_resolve = issue.occurrences
+        await db.flush()
+        return _issue_out(issue)
+
+    entity_type = _MAPPABLE.get(issue.kind)
+    if entity_type is None:
+        raise validation_error({"entity_id": "This kind of issue can't be mapped"})
+    if issue.resolution == "mapped":
+        raise ProblemError(409, "conflict", "This issue is already mapped")
+    model = MenuItemVariant if entity_type == "menu_item_variant" else StaffMember
+    if await db.get(model, entity_id) is None:  # RLS: another org's record reads as missing
+        raise validation_error({"entity_id": "Not found"})
+
+    await add_refs(db, org_id, issue.connection_id, entity_type, {issue.external_id: entity_id})
+    params = {"entity": entity_id, "conn": issue.connection_id, "ext": issue.external_id}
+    await db.execute(
+        _BACKFILL_LINES if entity_type == "menu_item_variant" else _BACKFILL_TIMECARDS, params
+    )
+    issue.resolved_at = datetime.now(UTC)
+    issue.resolved_by = user_id
+    issue.resolution = "mapped"
+    issue.resolved_entity_id = entity_id
+    issue.occurrences_at_resolve = issue.occurrences
     await db.flush()
     return _issue_out(issue)
 

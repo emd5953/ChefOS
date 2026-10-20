@@ -104,6 +104,12 @@ def derive_channel(source_name: str | None, fulfillment_types: list[str]) -> Cha
 # ---------------------------------------------------------------- orders
 
 
+def line_ref(li: Mapping[str, Any]) -> str:
+    """Identity of a line's item: the catalog object id, else the name (ad hoc lines)."""
+    cat_id = li.get("catalog_object_id")
+    return str(cat_id) if cat_id else (str(li.get("name") or "") or str(li.get("uid") or "unknown"))
+
+
 def _normalize_line(
     li: Mapping[str, Any], ctx: MappingContext, signals: dict[tuple[str, str], MappingIssueSignal]
 ) -> CanonicalSalesLine:
@@ -111,10 +117,10 @@ def _normalize_line(
     base = _money(li.get("base_price_money"))
     gross = _money(li.get("gross_sales_money")) or int(base * qty)
     discount = _money(li.get("total_discount_money"))
-    cat_id = li.get("catalog_object_id")
     name = str(li.get("name") or "")
-    ref = str(cat_id) if cat_id else (name or str(li.get("uid") or "unknown"))
-    variant = ctx.resolve_catalog(str(cat_id)) if cat_id else None
+    ref = line_ref(li)
+    # Ad hoc names resolve too, once an owner maps them (see "Resolving mapping issues").
+    variant = ctx.resolve_catalog(ref)
     if variant is None:
         signals.setdefault(
             ("unmapped_item", ref),

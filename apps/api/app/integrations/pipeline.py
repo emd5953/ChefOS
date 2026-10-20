@@ -33,6 +33,7 @@ from app.integrations.links import Link
 from app.integrations.models import IntegrationLocationLink, RawRecord
 from app.integrations.providers.square.normalizer import (
     NORMALIZER_VERSION,
+    line_ref,
     normalize_catalog_object,
     normalize_order,
     normalize_team_member,
@@ -181,12 +182,7 @@ async def mark_raw(
 
 
 def _line_catalog_refs(payloads: Iterable[dict[str, Any]]) -> set[str]:
-    return {
-        str(li["catalog_object_id"])
-        for p in payloads
-        for li in (p.get("line_items") or [])
-        if li.get("catalog_object_id")
-    }
+    return {line_ref(li) for p in payloads for li in (p.get("line_items") or [])}
 
 
 async def process_orders(

@@ -108,7 +108,8 @@ Password minimum is 12 characters. `timezone` is an IANA name.
 | POST | `/v1/integrations/connections/{id}/backfill` | `{ from: date, to: date }` | `202 { workflow_id }` |
 | DELETE | `/v1/integrations/connections/{id}` | none | `204` |
 | GET | `/v1/integrations/mapping-issues?status=open\|resolved` | none | `200 { data: MappingIssue[] }` |
-| POST | `/v1/integrations/mapping-issues/{id}/resolve` | `{ ignore: true }` | `200 MappingIssue` |
+| GET | `/v1/integrations/mapping-issues/{id}/candidates` | none | `200 { data: [{ id, label }] }` (menu item variants or staff members; 422 for other kinds) |
+| POST | `/v1/integrations/mapping-issues/{id}/resolve` | `{ entity_id }` or `{ ignore: true }` | `200 MappingIssue` (mapping backfills existing rows; 409 if already mapped) |
 | POST | `/v1/webhooks/square` | Square webhook | `200`. Unauthenticated, HMAC-verified (sandbox mode only) |
 
 **Square mode.** `SQUARE_MODE=fake` (default) uses a simulated Square sandbox. `authorize_url` points at the API's own `/v1/integrations/square/fake-consent?state=…`, which redirects straight to the callback, and data comes from a deterministic generator in Square's payload shapes. `SQUARE_MODE=sandbox` uses the real Square sandbox with `SQUARE_APP_ID`/`SQUARE_APP_SECRET`/`SQUARE_WEBHOOK_SIGNATURE_KEY`.

@@ -2,12 +2,12 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Link2, RefreshCw, Unplug } from "lucide-react";
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
-import { Select } from "@/components/ui/field";
+import { Field, Select } from "@/components/ui/field";
 import { Skeleton, TableSkeleton } from "@/components/ui/skeleton";
 import { EmptyState, ErrorState } from "@/components/ui/states";
 import { useToast } from "@/components/ui/toast";
@@ -22,7 +22,9 @@ import {
   keys,
   useConnectionDetail,
   useLocations,
+  useMappingCandidates,
   useMappingIssues,
+  useResolvedIssues,
 } from "@/lib/queries";
 import type { Connection, ConnectionDetail, MappingIssue, MappingIssueKind, SyncRun } from "@/lib/types";
 import { useNow } from "@/lib/use-now";
@@ -363,25 +365,143 @@ const ISSUE_LABEL: Record<MappingIssueKind, string> = {
   unknown_channel: "Unknown channel",
 };
 
+// Where the real fix lives, in one line per kind.
+const ISSUE_HELP: Record<MappingIssueKind, string> = {
+  unmapped_location: "Link this Square location above to import its orders.",
+  unmapped_item:
+    "Sold as an item that isn’t on your Square menu. Add it to the menu in Square, map it to a menu item here, or ignore it. Sales are counted either way.",
+  unmapped_team_member:
+    "Clocked in on Square but not in your team directory. Add them in Square or map them to a staff member. Hours count toward labor either way.",
+  unknown_channel: "An order source ChefOS doesn’t recognize. Its sales are counted under Other.",
+};
+
+const MAP_NOUN: Partial<Record<MappingIssueKind, string>> = {
+  unmapped_item: "menu item",
+  unmapped_team_member: "staff member",
+};
+
+function IssueRow({
+  issue,
+  now,
+  meta,
+  actions,
+}: {
+  issue: MappingIssue;
+  now: number;
+  meta?: ReactNode;
+  actions?: ReactNode;
+}) {
+  return (
+    <li className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+      <div className="min-w-0">
+        <p className="flex flex-wrap items-center gap-2 text-[14px] font-semibold tracking-[-0.02em]">
+          <span className="truncate">{issue.label}</span>
+          <Badge>{ISSUE_LABEL[issue.kind]}</Badge>
+          {meta}
+        </p>
+        <p className="mt-1 text-xs text-foreground/60">{ISSUE_HELP[issue.kind]}</p>
+        <p className="mt-1 text-xs text-foreground/50">
+          {issue.occurrences.toLocaleString("en-US")} occurrence{issue.occurrences === 1 ? "" : "s"} &middot; last seen{" "}
+          {formatRelative(issue.last_seen_at, now)} &middot; <span className="font-mono text-[11px]">{issue.external_id}</span>
+        </p>
+      </div>
+      {actions && <div className="flex shrink-0 gap-2">{actions}</div>}
+    </li>
+  );
+}
+
+function MapDialog({ issue, onClose }: { issue: MappingIssue | null; onClose: () => void }) {
+  const candidates = useMappingCandidates(issue?.id);
+  const [choice, setChoice] = useState("");
+  const qc = useQueryClient();
+  const toast = useToast();
+  const noun = issue ? MAP_NOUN[issue.kind] ?? "record" : "record";
+
+  const map = useMutation({
+    mutationFn: (v: { id: string; entity_id: string }) =>
+      api<MappingIssue>(`/v1/integrations/mapping-issues/${v.id}/resolve`, {
+        method: "POST",
+        body: { entity_id: v.entity_id },
+      }),
+    onSuccess: async () => {
+      toast("Mapped. Past and future records now use it.", "success");
+      setChoice("");
+      onClose();
+      await qc.invalidateQueries({ queryKey: ["mapping-issues"] });
+    },
+    onError: (e) => toast(errorMessage(e), "error"),
+  });
+
+  return (
+    <Dialog
+      open={issue !== null}
+      onOpenChange={(open) => {
+        if (!open) {
+          setChoice("");
+          onClose();
+        }
+      }}
+      title={`Map “${issue?.label ?? ""}”`}
+      description={`Choose the ${noun} this is. Existing records are updated, and future syncs match it automatically.`}
+    >
+      <Field label={noun.charAt(0).toUpperCase() + noun.slice(1)} error={candidates.isError ? errorMessage(candidates.error) : undefined}>
+        {(f) => (
+          <Select {...f} value={choice} disabled={candidates.isPending} onChange={(e) => setChoice(e.target.value)}>
+            <option value="">{candidates.isPending ? "Loading…" : `Select a ${noun}`}</option>
+            {(candidates.data ?? []).map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label}
+              </option>
+            ))}
+          </Select>
+        )}
+      </Field>
+      <div className="mt-5 flex justify-end gap-2">
+        <Button variant="outline" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          disabled={!choice || !issue}
+          loading={map.isPending}
+          onClick={() => issue && map.mutate({ id: issue.id, entity_id: choice })}
+        >
+          Map
+        </Button>
+      </div>
+    </Dialog>
+  );
+}
+
 function IssuesCard({ busy }: { busy: boolean }) {
   const { role } = useSession();
   const allowed = canManage(role);
-  const q = useMappingIssues(busy ? 3000 : 30_000);
+  const interval = busy ? 3000 : 30_000;
+  const q = useMappingIssues(interval);
+  const resolved = useResolvedIssues(interval);
   const qc = useQueryClient();
   const toast = useToast();
   const now = useNow();
+  const [mapping, setMapping] = useState<MappingIssue | null>(null);
 
   const ignore = useMutation({
     mutationFn: (id: string) =>
       api<MappingIssue>(`/v1/integrations/mapping-issues/${id}/resolve`, { method: "POST", body: { ignore: true } }),
     onSuccess: async () => {
       toast("Issue ignored.", "success");
-      await qc.invalidateQueries({ queryKey: keys.issues });
+      await qc.invalidateQueries({ queryKey: ["mapping-issues"] });
     },
     onError: (e) => toast(errorMessage(e), "error"),
   });
 
+  const mapButton = (i: MappingIssue) =>
+    allowed && i.mappable ? (
+      <Button variant="outline" size="sm" onClick={() => setMapping(i)}>
+        Map<span className="sr-only"> {i.label}</span>
+      </Button>
+    ) : null;
+
   const issues = q.data ?? [];
+  const recurring = (resolved.data ?? []).filter((i) => i.resolution === "ignored" && i.new_since_resolved > 0);
   return (
     <Card>
       <CardHeader
@@ -400,32 +520,49 @@ function IssuesCard({ busy }: { busy: boolean }) {
         ) : (
           <ul className="divide-y divide-border border-t border-border">
             {issues.map((i) => (
-              <li key={i.id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-                <div className="min-w-0">
-                  <p className="flex flex-wrap items-center gap-2 text-[14px] font-semibold tracking-[-0.02em]">
-                    <span className="truncate">{i.label}</span>
-                    <Badge>{ISSUE_LABEL[i.kind]}</Badge>
-                  </p>
-                  <p className="mt-1 text-xs text-foreground/50">
-                    {i.occurrences.toLocaleString("en-US")} occurrence{i.occurrences === 1 ? "" : "s"} &middot; last seen{" "}
-                    {formatRelative(i.last_seen_at, now)} &middot; <span className="font-mono text-[11px]">{i.external_id}</span>
-                  </p>
-                </div>
-                {allowed && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => ignore.mutate(i.id)}
-                    loading={ignore.isPending && ignore.variables === i.id}
-                  >
-                    Ignore<span className="sr-only"> {i.label}</span>
-                  </Button>
-                )}
-              </li>
+              <IssueRow
+                key={i.id}
+                issue={i}
+                now={now}
+                actions={
+                  allowed && (
+                    <>
+                      {mapButton(i)}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => ignore.mutate(i.id)}
+                        loading={ignore.isPending && ignore.variables === i.id}
+                      >
+                        Ignore<span className="sr-only"> {i.label}</span>
+                      </Button>
+                    </>
+                  )
+                }
+              />
             ))}
           </ul>
         )}
+        {recurring.length > 0 && (
+          <div className="border-t border-border">
+            <p className="px-5 pt-4 text-xs font-semibold uppercase tracking-[0.06em] text-foreground/50 sm:px-6">
+              Ignored, still occurring
+            </p>
+            <ul className="divide-y divide-border">
+              {recurring.map((i) => (
+                <IssueRow
+                  key={i.id}
+                  issue={i}
+                  now={now}
+                  meta={<Badge tone="warning">+{i.new_since_resolved.toLocaleString("en-US")} since ignored</Badge>}
+                  actions={mapButton(i)}
+                />
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
+      <MapDialog issue={mapping} onClose={() => setMapping(null)} />
     </Card>
   );
 }

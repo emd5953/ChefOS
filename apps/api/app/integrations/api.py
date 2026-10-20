@@ -22,6 +22,7 @@ from app.integrations.schemas import (
     ConnectionList,
     ConnectionOut,
     LinksPatch,
+    MappingCandidateList,
     MappingIssueList,
     MappingIssueOut,
     ResolveRequest,
@@ -171,14 +172,24 @@ async def mapping_issues(
     return MappingIssueList(data=await service.list_issues(db, status))
 
 
+@router.get(
+    "/integrations/mapping-issues/{issue_id}/candidates", response_model=MappingCandidateList
+)
+async def mapping_candidates(
+    issue_id: uuid.UUID, ctx: AuthDep, db: OrgSession
+) -> MappingCandidateList:
+    require_role(ctx, _ADMINS)
+    return MappingCandidateList(data=await service.mapping_candidates(db, issue_id))
+
+
 @router.post("/integrations/mapping-issues/{issue_id}/resolve", response_model=MappingIssueOut)
 async def resolve_issue(
     issue_id: uuid.UUID, body: ResolveRequest, ctx: AuthDep, db: OrgSession
 ) -> MappingIssueOut:
     require_role(ctx, _ADMINS)
-    if not body.ignore:
-        raise validation_error({"ignore": "Only ignoring an issue is supported"})
-    return await service.resolve_issue_ignore(db, issue_id, ctx.user_id)
+    return await service.resolve_issue(
+        db, ctx.org_id, issue_id, ctx.user_id, entity_id=body.entity_id
+    )
 
 
 @router.post("/webhooks/square", include_in_schema=True)

@@ -259,6 +259,10 @@ async def test_mapping_issues_list_and_ignore(connect: Connect, clock: Clock) ->
             "first_seen_at",
             "last_seen_at",
             "resolved_at",
+            "resolution",
+            "resolved_entity_id",
+            "new_since_resolved",
+            "mappable",
         }
         for i in issues
     )
@@ -292,6 +296,109 @@ async def test_mapping_issues_list_and_ignore(connect: Connect, clock: Clock) ->
         headers=conn.headers,
     )
     assert nf.status_code == 404
+
+
+ISSUES = "/v1/integrations/mapping-issues"
+
+
+async def _issue(conn: Connected, kind: str, status: str = "open") -> dict[str, Any]:
+    r = await conn.client.get(ISSUES, params={"status": status})
+    return next(i for i in r.json()["data"] if i["kind"] == kind)
+
+
+async def _candidate(conn: Connected, issue_id: str, label_prefix: str) -> str:
+    r = await conn.client.get(f"{ISSUES}/{issue_id}/candidates")
+    assert r.status_code == 200, r.text
+    return str(next(c["id"] for c in r.json()["data"] if c["label"].startswith(label_prefix)))
+
+
+async def _resolve(conn: Connected, issue_id: str, body: dict[str, Any]) -> httpx.Response:
+    return await conn.client.post(f"{ISSUES}/{issue_id}/resolve", json=body, headers=conn.headers)
+
+
+async def test_map_item_backfills_lines_and_stops_recurring(connect: Connect, clock: Clock) -> None:
+    conn = await connect()
+    await load_days(conn, clock, date(2026, 2, 20), date(2026, 2, 28))
+    issue = await _issue(conn, "unmapped_item")
+    assert issue["external_id"] == "ADHOC_OPEN_FOOD" and issue["mappable"]
+    variant = await _candidate(conn, issue["id"], "Dry-Aged Burger")
+
+    r = await _resolve(conn, issue["id"], {"entity_id": variant})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["resolution"] == "mapped" and body["resolved_entity_id"] == variant
+
+    count = text(
+        "SELECT count(*) FILTER (WHERE menu_item_variant_id IS NULL) AS unmapped, "
+        "count(*) FILTER (WHERE menu_item_variant_id = :v) AS mapped "
+        "FROM sales_order_lines WHERE external_item_ref = 'ADHOC_OPEN_FOOD'"
+    )
+    async with scoped_session(conn.org_id) as db:
+        before = (await db.execute(count, {"v": variant})).one()
+    assert before.unmapped == 0 and before.mapped > 0
+
+    # Later syncs resolve the ref: new lines arrive mapped and the issue doesn't recur.
+    await load_days(conn, clock, date(2026, 3, 1), date(2026, 3, 6))
+    async with scoped_session(conn.org_id) as db:
+        after = (await db.execute(count, {"v": variant})).one()
+    assert after.unmapped == 0 and after.mapped > before.mapped
+    resolved = await _issue(conn, "unmapped_item", "resolved")
+    assert resolved["occurrences"] == issue["occurrences"] and resolved["new_since_resolved"] == 0
+    assert all(i["kind"] != "unmapped_item" for i in (await conn.client.get(ISSUES)).json()["data"])
+    assert (await _resolve(conn, issue["id"], {"entity_id": variant})).status_code == 409
+
+
+async def test_map_team_member_backfills_timecards(connect: Connect, clock: Clock) -> None:
+    conn = await connect()
+    await load_days(conn, clock, date(2026, 2, 20), date(2026, 2, 28))
+    issue = await _issue(conn, "unmapped_team_member")
+    r = await conn.client.get(f"{ISSUES}/{issue['id']}/candidates")
+    staff = str(r.json()["data"][0]["id"])
+
+    assert (await _resolve(conn, issue["id"], {"entity_id": staff})).status_code == 200
+    await load_days(conn, clock, date(2026, 3, 1), date(2026, 3, 6))
+    async with scoped_session(conn.org_id) as db:
+        rows = (
+            await db.execute(
+                text("SELECT staff_member_id FROM timecards WHERE external_staff_ref = :ext"),
+                {"ext": issue["external_id"]},
+            )
+        ).all()
+    assert len(rows) > issue["occurrences"] - 1 and {str(r.staff_member_id) for r in rows} == {
+        staff
+    }
+
+
+async def test_ignored_issue_reports_new_occurrences(connect: Connect, clock: Clock) -> None:
+    conn = await connect()
+    await load_days(conn, clock, date(2026, 2, 20), date(2026, 2, 28))
+    issue = await _issue(conn, "unmapped_item")
+    r = await _resolve(conn, issue["id"], {"ignore": True})
+    assert r.json()["resolution"] == "ignored" and r.json()["new_since_resolved"] == 0
+
+    await load_days(conn, clock, date(2026, 3, 1), date(2026, 3, 6))
+    ignored = await _issue(conn, "unmapped_item", "resolved")
+    assert ignored["new_since_resolved"] == ignored["occurrences"] - issue["occurrences"] > 0
+    # Still mappable after being ignored.
+    variant = await _candidate(conn, issue["id"], "Dry-Aged Burger")
+    assert (await _resolve(conn, issue["id"], {"entity_id": variant})).status_code == 200
+
+
+async def test_resolve_rejects_bad_requests(connect: Connect, clock: Clock) -> None:
+    conn = await connect()
+    other = await connect()
+    await load_days(conn, clock, date(2026, 2, 20), date(2026, 2, 28))
+    await load_days(other, clock, date(2026, 2, 27), date(2026, 2, 27))
+    issue = await _issue(conn, "unmapped_item")
+    async with scoped_session(other.org_id) as db:
+        foreign = str(await db.scalar(text("SELECT id FROM menu_item_variants LIMIT 1")))
+
+    both = await _resolve(conn, issue["id"], {"ignore": True, "entity_id": foreign})
+    assert both.status_code == 422
+    assert (await _resolve(conn, issue["id"], {})).status_code == 422
+    for entity in (foreign, str(uuid.uuid4())):  # another org's variant reads as missing (RLS)
+        r = await _resolve(conn, issue["id"], {"entity_id": entity})
+        assert r.status_code == 422 and r.json()["errors"] == {"entity_id": "Not found"}
 
 
 async def test_disconnect_revokes_and_keeps_data(

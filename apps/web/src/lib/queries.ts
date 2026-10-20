@@ -10,6 +10,7 @@ import type {
   ItemsResponse,
   List,
   Location,
+  MappingCandidate,
   MappingIssue,
   SousAnswer,
   SousAskInput,
@@ -24,6 +25,8 @@ export const keys = {
   connections: ["connections"] as const,
   connection: (id: string) => ["connection", id] as const,
   issues: ["mapping-issues", "open"] as const,
+  resolvedIssues: ["mapping-issues", "resolved"] as const,
+  candidates: (id: string) => ["mapping-candidates", id] as const,
   today: (loc: string) => ["today", loc] as const,
   summary: (loc: string, from: string, to: string, compare: CompareMode) =>
     ["summary", loc, from, to, compare] as const,
@@ -74,6 +77,26 @@ export function useMappingIssues(interval: number) {
       (await api<List<MappingIssue>>("/v1/integrations/mapping-issues", { query: { status: "open" } }))
         .data,
     refetchInterval: interval,
+  });
+}
+
+/** Resolved issues; the Integrations page shows ignored ones that are still occurring. */
+export function useResolvedIssues(interval: number) {
+  return useQuery({
+    queryKey: keys.resolvedIssues,
+    queryFn: async () =>
+      (await api<List<MappingIssue>>("/v1/integrations/mapping-issues", { query: { status: "resolved" } }))
+        .data,
+    refetchInterval: interval,
+  });
+}
+
+export function useMappingCandidates(issueId: string | undefined) {
+  return useQuery({
+    queryKey: keys.candidates(issueId ?? ""),
+    queryFn: async () =>
+      (await api<List<MappingCandidate>>(`/v1/integrations/mapping-issues/${issueId}/candidates`)).data,
+    enabled: !!issueId,
   });
 }
 

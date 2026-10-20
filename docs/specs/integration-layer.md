@@ -106,7 +106,8 @@ external_refs(org_id, connection_id, entity_type, external_id, entity_id)
   unique(connection_id, entity_type, external_id)
 
 mapping_issues(id, org_id, connection_id, kind, external_id, label, first_seen_at,
-  last_seen_at, occurrences, resolved_at, resolved_by)
+  last_seen_at, occurrences, resolved_at, resolved_by, resolution null,
+  resolved_entity_id null, occurrences_at_resolve null)
   kind ∈ {unmapped_location, unmapped_item, unmapped_team_member, unknown_channel}
 ```
 
@@ -209,6 +210,7 @@ POST   /v1/integrations/connections/{id}/sync        ← { streams? }           
 POST   /v1/integrations/connections/{id}/backfill    ← { from, to, streams? }     → 202 { workflow_id }
 DELETE /v1/integrations/connections/{id}             → revokes token; status=disconnected; data retained
 GET    /v1/integrations/mapping-issues?status=open
+GET    /v1/integrations/mapping-issues/{id}/candidates → [{ id, label }] (mappable kinds only)
 POST   /v1/integrations/mapping-issues/{id}/resolve  ← { entity_id | ignore: true }
 
 POST   /v1/webhooks/square                           (unauthenticated; HMAC-verified)
@@ -259,6 +261,30 @@ migrations/                     schema above
 
 `squareup` (official SDK), `temporalio`, `boto3` (S3 API against RustFS), `cryptography` (AES-GCM). All free. No unified-API vendor.
 
+### Resolving mapping issues
+
+An owner or admin resolves an issue in one of two ways. Both are recorded on the issue (`resolution`, `resolved_by`, `resolved_at`).
+
+| Kind | Map to | Ignore |
+| --- | --- | --- |
+| `unmapped_item` | An existing menu item variant | Yes |
+| `unmapped_team_member` | An existing staff member | Yes |
+| `unmapped_location` | Not here: link the location on the connection (existing flow) | Yes |
+| `unknown_channel` | No | Yes |
+
+**Map** (`{ entity_id }`). In one transaction:
+
+1. Validate that the issue kind is mappable and that `entity_id` is a variant or staff member in the caller's org (RLS-scoped lookup).
+2. Write an `external_refs` row: `menu_item_variant` or `staff_member`, keyed by the issue's `external_id`. Later syncs resolve the ref through the normal path, so the issue doesn't recur.
+3. Backfill existing canonical rows for this connection: `sales_order_lines.menu_item_variant_id` where `external_item_ref` matches and the variant is still null, or `timecards.staff_member_id` where `external_staff_ref` matches and the staff member is still null. No read model depends on these columns, so nothing is rebuilt.
+4. Mark the issue resolved with `resolution = 'mapped'` and `resolved_entity_id`.
+
+Item refs are the Square catalog object id when the line has one, otherwise the line name (ad hoc lines). The normalizer resolves both through `external_refs`, so a mapped ad hoc name also resolves on later orders.
+
+**Ignore** (`{ ignore: true }`) marks the issue resolved with `resolution = 'ignored'` and stores `occurrences_at_resolve`. Occurrences keep counting. The API returns `new_since_resolved`, and the Integrations page lists ignored issues that are still occurring, so a recurring problem stays visible without reappearing in the open queue. An ignored issue can still be mapped later.
+
+Each kind has a one-line explanation in the UI that says where the real fix lives. For example, "Open Food" is fixed in Square by adding the item to the menu.
+
 ## Behavior
 
 ### Happy path: connect Square
@@ -288,8 +314,8 @@ migrations/                     schema above
 | Square 401 / token revoked | Connection → `needs_reauth`; scheduled syncs pause; owner notified; data retained |
 | Merchant revokes app in Square | Same as 401 when next detected; OAuth revocation webhook handled where available |
 | Order for unlinked Square location | Raw record landed; normalization deferred; `unmapped_location` issue raised; processed when linked |
-| Line item for unknown catalog item | Line stored with `external_item_ref`, `menu_item_variant_id` null; `unmapped_item` issue; still counts toward sales totals |
-| Timecard for unlinked team member | Stored against a placeholder; excluded from per-employee views, included in location labor totals; `unmapped_team_member` issue |
+| Line item for unknown catalog item | Line stored with `external_item_ref`, `menu_item_variant_id` null; `unmapped_item` issue; still counts toward sales totals. Mapping it backfills existing lines |
+| Timecard for unlinked team member | Stored with `staff_member_id` null; excluded from per-employee views, included in location labor totals; `unmapped_team_member` issue. Mapping it backfills existing timecards |
 | Normalizer throws on a payload | Raw record `quarantined` with error; other records continue; alert if quarantine rate > 0.1% of a run |
 | Location timezone or day-start changed | Affected business dates recomputed via `Renormalize` for that location |
 | Backfill hits rate limits | Backfill yields to incremental sync (separate task queue, lower concurrency) |

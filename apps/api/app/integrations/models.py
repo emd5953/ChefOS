@@ -223,6 +223,9 @@ class MappingIssue(Base):
             "'unknown_channel')",
             name="kind",
         ),
+        CheckConstraint(
+            "resolution IS NULL OR resolution IN ('ignored', 'mapped')", name="resolution"
+        ),
         Index("ix_mapping_issues_org_id", "org_id"),
     )
 
@@ -239,3 +242,7 @@ class MappingIssue(Base):
     occurrences: Mapped[int] = mapped_column(BigInteger, default=1, server_default="1")
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     resolved_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), default=None)
+    resolution: Mapped[str | None] = mapped_column(String, default=None)  # ignored | mapped
+    resolved_entity_id: Mapped[uuid.UUID | None] = mapped_column(default=None)
+    # Occurrences when resolved; later growth means an ignored issue is still happening.
+    occurrences_at_resolve: Mapped[int | None] = mapped_column(BigInteger, default=None)
