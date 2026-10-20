@@ -1,6 +1,6 @@
 # Inventory Core (Phase 4)
 
-**Status:** Proposed · **Owner:** TBD · **Last updated:** 2026-10-20
+**Status:** Done · **Owner:** ChefOS · **Last updated:** 2026-10-20
 **Related:** [PRD](../prd.md), [Roadmap](../roadmap.md), [Architecture](../architecture.md), [Platform foundation](platform-foundation.md), [Integration layer](integration-layer.md)
 
 ## Problem
@@ -38,7 +38,7 @@ On-hand is a current balance updated transactionally by receipts and submitted c
 
 ### Data model
 
-The migration number is the next number after the current head (currently `0004`; Phase 3 is expected to take `0005`). All listed tables carry `org_id`; location-scoped records also carry `location_id`. UUIDv7 IDs, `timestamptz`, `created_at`/`updated_at`, explicit org filters, and RLS follow platform conventions. Every org-scoped reference uses a composite foreign key `(org_id, referenced_id)` to a matching unique key, including location, supplier, item, storage area, pack, parent, and Commerce menu references. Location-scoped service operations also verify the caller has access to that location.
+The catalog foundation migration `0009` and operational migration `0010` follow this branch's current head at `0004`. All listed tables carry `org_id`; location-scoped records also carry `location_id`. UUIDv7 IDs, `timestamptz`, `created_at`/`updated_at`, explicit org filters, and RLS follow platform conventions. Every org-scoped reference uses a composite foreign key `(org_id, referenced_id)` to a matching unique key, including location, supplier, item, storage area, pack, parent, and Commerce menu references. Location-scoped service operations also verify the caller has access to that location.
 
 | Table | Key columns |
 | --- | --- |
@@ -141,14 +141,21 @@ The mobile-first count flow opens a location and storage area, shows searchable 
 
 - Restaurants may count by weight while recipes use volume. Cross-dimension conversions require item-specific density and are deliberately excluded; clarify this limitation in the item editor.
 - Last-received cost is simple and explainable but can move sharply with one unusual delivery. Weighted average or FIFO costing would require a separate accounting decision.
-- The exception threshold default (greater of 20% or one base unit) is a starting point; kitchens may need item-specific tolerances and an org setting.
+- The exception threshold is currently fixed at the specified default: variance greater than the larger of 20% of expected quantity or one base unit. Item-specific tolerances and an org setting remain future configuration work.
 
 ## Milestones
 
 Each milestone leaves `main` usable and green in CI.
 
-1. **INV-1: Catalog and stock foundation.** Next migration after current head, RLS, items, packs, conversions, suppliers, storage areas, pars, and stock view. Exit: manager can configure an item and par; invalid or mismatched references fail safely.
-2. **INV-2: Counts.** Versioned levels, draft sessions, employee line entry, manager submit/review, exceptions, movements, and audit. Exit: stale submit returns 409; a fresh area count updates on-hand once.
-3. **INV-3: Purchasing and receiving.** Snapshotted PO lines, ordered/received/closed quantities, partial receipts, explicit overage and reopen transitions, cost snapshots, and supplier/PO screens. Exit: manager can place, partially receive, close/reopen, and complete an order without double-counting.
-4. **INV-4: Recipes and plate cost.** Recipe editor, ingredient normalization, existing `menu_items.recipe_id` mapping, cost state, and plate-cost display. Exit: mapped menu item shows reproducible plate cost; unmapped or cost-incomplete items are explicit.
-5. **MOB-3: Mobile-first web workflows.** Responsive count and receiving routes in `apps/web`, with location scope mapping, touch-friendly entry, loading/empty/error states, and online retry. Exit: complete a count and receive flow at phone viewport; CI remains green.
+1. **INV-1: Catalog and stock foundation — done.** Catalog, packs, conversions, suppliers, storage areas and assignments, pars, stock view, and catalog editing/archive UI.
+2. **INV-2: Counts — done.** Versioned levels, draft sessions, employee line entry, manager submit/review, exceptions, movements, audit, and stale-version rejection.
+3. **INV-3: Purchasing and receiving — done.** Snapshotted PO lines, ordered/received/closed quantities, partial receipts, overage reasons, short close/reopen, idempotency, cost snapshots, and supplier/PO screens.
+4. **INV-4: Recipes and plate cost — done.** Recipe editor, ingredient normalization, existing `menu_items.recipe_id` mapping, cost state, and plate-cost display.
+5. **MOB-3: Mobile-first web workflows — done.** Responsive count and receiving routes in `apps/web`, location scope mapping, touch-friendly entry, loading/empty/error states, and online retry.
+
+### Implementation notes
+
+- `0009` adds the catalog foundation; `0010` adds counts, stock movements, purchasing/receipts, recipes, the tenant-safe Commerce recipe reference, and RLS. The RLS structural inventory covers each new org table.
+- Count and receipt events use each location's timezone and configured business-day start. Count submission locks levels and compares every captured version before applying a stock snapshot. Receipt retries serialize per org/idempotency key and return the original receipt with its lines.
+- `python -m app.cli seed-inventory-demo` adds 15 ingredient items, packs, three areas, pars, suppliers, a partially received order, and recipes linked to POS items for Juniper House. It is separate from normal setup and was not run against the dev database.
+- Ambiguity decision: demo inventory seeding is a separate explicit command, rather than part of `seed-demo` or `demo`, so the Commerce walkthrough stays lightweight and inventory demo data remains opt-in.

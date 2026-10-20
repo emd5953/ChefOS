@@ -20,6 +20,10 @@ INTEGRATION_RLS_TABLES = {
     "raw_records", "webhook_events", "external_refs", "mapping_issues", "menu_items",
     "menu_item_variants", "staff_members", "sales_orders", "sales_order_lines",
     "sales_order_returns", "timecards", "daily_sales", "daily_labor",
+    "suppliers", "inventory_items", "item_unit_conversions", "item_packs", "storage_areas",
+    "item_storage_assignments", "inventory_pars", "inventory_levels",
+    "count_sessions", "count_lines", "stock_movements", "purchase_orders",
+    "purchase_order_lines", "receipts", "receipt_lines", "recipes", "recipe_ingredients",
 }  # fmt: skip
 # Team tables (behavior is covered in tests/team/test_rls_team.py).
 TEAM_RLS_TABLES = {

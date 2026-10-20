@@ -1,7 +1,7 @@
 # API Reference (v1)
 
 **Status:** Contract for the demo build · **Last updated:** 2026-10-20
-**Related:** [Platform foundation](specs/platform-foundation.md), [Integration layer](specs/integration-layer.md), [Team](specs/team.md)
+**Related:** [Platform foundation](specs/platform-foundation.md), [Integration layer](specs/integration-layer.md), [Team](specs/team.md), [Inventory](specs/inventory.md)
 
 The browser reaches the API only through the Next.js origin: `http://localhost:3000/api/*` is rewritten to `http://localhost:8080/*`. All paths below are relative to the API root (e.g. `/v1/auth/me`; the browser calls `/api/v1/auth/me`).
 
@@ -343,6 +343,21 @@ type TimeOff = { id: string; employee_id: string; employee_name: string | null; 
 Times on requests are location-local wall clock (`HH:MM`). The approved availability with the latest `effective_from` on or before a date applies to that date. Submitting availability or time off notifies the employee's managers (owners/admins and managers of their locations).
 
 `MyWeek` reads only the published snapshot: draft edits are invisible until the next publish. Notifications are in-app only; clients poll every 60 s while visible and on focus.
+
+## Inventory (catalog foundation)
+
+Inventory routes require an authenticated session. Catalog mutations require owner, admin, or manager; location-scoped requests also check location access. Quantities use the item's base unit.
+
+| Method | Path | Body / query | Response |
+| --- | --- | --- | --- |
+| GET | `/v1/inventory/items?location_id` | location UUID | `{ data: Item[] }`, including on-hand, par, and below-par state |
+| POST | `/v1/inventory/items` | name, category, base unit, dimension, supplier, currency, conversions | `201 Item` |
+| PATCH | `/v1/inventory/items/{item_id}` | name, category, active, supplier | `Item` |
+| PUT | `/v1/inventory/items/{item_id}/par` | location ID and base quantity | `Par` |
+| GET/POST | `/v1/inventory/suppliers` | supplier fields on create | `{ data: Supplier[] }` / `201 Supplier` |
+| GET/POST | `/v1/inventory/storage-areas` | location query / location ID, name, sort order | `{ data: StorageArea[] }` / `201 StorageArea` |
+
+Item base units must be `g` for mass, `ml` for volume, or `ea` for count. INV-1 remaining catalog endpoints and later count, purchasing, recipe, and mobile workflows are documented in the [inventory spec](specs/inventory.md).
 
 ## Sous
 
