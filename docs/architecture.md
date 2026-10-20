@@ -127,13 +127,13 @@ infra/           docker-compose.yml, OTel collector config, seed scripts
 docs/
 ```
 
-Current. The production services do not exist yet. Today's repository contains:
+Current:
 
 | Path | What it is |
 | --- | --- |
-| `index.html`, `app.js`, `styles.css`, `assets/` | Static reproduction of the ChefOS public marketing site, kept as design reference |
-| `server.py` | Prototype API: Python stdlib HTTP server, SQLite, session auth, CSRF, org-scoped queries |
-| `product.js` | Prototype workspace UI (vanilla JS) served at `/app` |
+| `apps/api/` | FastAPI service and Temporal workers |
+| `apps/web/` | Next.js app (workspace) plus `public/`, the static marketing site served through rewrites in `next.config.ts` |
+| `infra/` | `docker-compose.yml`, OTel collector config, seed scripts |
 | `docs/` | Product and engineering documentation |
 
-The prototype is a UX reference only ([ADR 0002](adr/0002-production-stack.md)). Its schema and API are not the production design. It's deleted once `apps/web` serves the marketing site and equivalent screens (end of Phase 2). The marketing site moves into `apps/web`.
+The stdlib prototype is retired. Its UX reference lives at tag `prototype-v0` ([ADR 0002](adr/0002-production-stack.md)).

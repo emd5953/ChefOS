@@ -11,10 +11,10 @@ As of 2026-10-20:
 
 - **Phase 0:** done.
 - **Phase 1:** M1–M5 done in simulated mode. Real-sandbox mode is untested.
-- **Phase 2:** Commerce views done. Prototype deletion pending.
+- **Phase 2:** done. Commerce views built, marketing site moved into `apps/web`, prototype deleted.
 - **Phase 5:** Sous read-only built ahead of order over Commerce data (milestones 1–4). The eval set passes 39/40 on qwen3:8b. Team and Inventory tools follow their modules.
 - **Phases 3, 4, 6:** not started.
-- **Prototype workspace** (`server.py` + `product.js`): legacy UX reference, to be deleted once its screens are covered.
+- **Prototype workspace:** deleted from `main`. UX reference at tag `prototype-v0`; run it with `git worktree add ../chefos-prototype prototype-v0 && cd ../chefos-prototype && python3 server.py`.
 
 ## Phase 0: Platform foundation
 

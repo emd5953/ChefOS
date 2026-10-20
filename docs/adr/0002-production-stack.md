@@ -30,6 +30,8 @@ External APIs are used only where free: Square's developer sandbox. Toast's part
 
 **Prototype retirement:** the prototype is not extended. It stays runnable as a UX reference until the Next.js app serves the marketing site and covers the equivalent workspace screens (end of roadmap Phase 2). Then `server.py` and `product.js` are deleted. The marketing site moves into the Next.js app.
 
+Done 2026-10-20; see tag `prototype-v0`.
+
 ## Consequences
 
 - `docker compose up` brings up the whole platform. There's no cloud bill and no account setup beyond a free Square developer account.

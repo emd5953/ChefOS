@@ -11,10 +11,9 @@ Modules: **Team**, **Commerce**, **Inventory**. Shared capabilities: **Integrati
 | Product requirements | Draft ([PRD](docs/prd.md)) |
 | Platform foundation (Phase 0) | Built: local stack, RLS, auth, Temporal workers, encryption, CI |
 | Square integration (M1–M5) | Built: simulated sandbox by default, real sandbox optional |
-| Commerce (Phase 2) | Built: overview, sales, menu items, freshness |
+| Commerce (Phase 2) | Built: overview, sales, menu items, freshness. Phase 2 is complete |
 | Sous (read-only) | Built: local model via Ollama, 5 Commerce tools, grounded answers, 40-case eval (`make sous-eval`) |
 | Team, Inventory | Not started ([roadmap](docs/roadmap.md)) |
-| Prototype workspace | Legacy UX reference (`server.py`, `product.js`); removed once fully covered |
 | Marketing site | Served by the web app at `/` |
 
 ## Run the demo
@@ -53,35 +52,3 @@ Other targets: `make test`, `make lint`, `make smoke`, `make down` (keep data), 
 | [Spec: Sous](docs/specs/sous.md) | Assistant design, tools, approval path |
 | [Research: ChefOS](docs/research/chefos-public-site.md) | Competitive research on the reference product |
 | [Interview prep](docs/interview-prep.md) | Engineering topics mapped to this codebase, and production gaps |
-
-## Run the prototype
-
-Requires Python 3.11+. No third-party packages.
-
-```sh
-python3 server.py
-```
-
-- Marketing site: http://127.0.0.1:8000/
-- Workspace: http://127.0.0.1:8000/app
-- Health: http://127.0.0.1:8000/api/v1/health
-
-The first run seeds a fictional restaurant and prints the demo sign-in to the console (`owner@chefos.local` / `ChefOS-demo-2026!`).
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `CHEFOS_DB_PATH` | `~/.chefos/chefos.sqlite3` | SQLite database file (kept outside the web root) |
-| `PORT` | `8000` | Bind port |
-| `CHEFOS_HOST` | `127.0.0.1` | Bind address |
-
-### What the prototype covers
-
-SQLite-backed API (`/api/v1`) and screens for inventory adjustments, purchase orders and receiving, recipe costing, waste, employees, weekly shifts, shift requests, time clock, tasks, sales summaries, team channels, and a restricted sales-ingest API key. Sous is a deterministic keyword-based stand-in.
-
-Endpoints: `/auth/{register,login,logout,me,accept-invitation}`, `/inventory`, `/purchase-orders`, `/recipes`, `/waste`, `/employees`, `/invitations`, `/shifts`, `/time-entries`, `/tasks`, `/sales`, `/reports/summary`, `/channels`, `/api-keys`, `/sous`.
-
-**Sales ingest:** create a key in **Workspace → Integrations**, then `POST /api/v1/sales/ingest` with `Authorization: Bearer ck_live_…`. Include a stable `external_id` so retries update the same record. Keys are shown once, stored hashed, and limited to sales writes.
-
-### Security boundary
-
-PBKDF2 password hashing, HttpOnly SameSite session cookies, CSRF tokens, org-scoped queries, input validation at the API boundary. It's a single-process development server: don't expose it to the internet.

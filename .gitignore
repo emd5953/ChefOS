@@ -1,7 +1,5 @@
 __pycache__/
 *.py[cod]
-.chefos/
-data/
 *.sqlite
 *.sqlite3
 *.db

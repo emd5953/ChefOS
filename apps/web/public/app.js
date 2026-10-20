@@ -91,7 +91,7 @@ function renderFaq(tab="Platform") {
  box.innerHTML=(faq[tab]||faq.Platform).map(([q,a],i)=>`<article class="faq-item ${i===0?"open":""}"><button class="faq-question" aria-expanded="${i===0}">${q}<span>${i===0?"−":"+"}</span></button><div class="faq-answer">${a}</div></article>`).join("");
 }
 function render() {
- const r=route(); if(r==="app"){window.ChefOSProduct.boot();return;} let html;
+ const r=route(); let html;
  if(r==="home") html=homePage();
  else if(r==="pricing") html=pricingPage();
  else if(r==="integrations") html=integrationsPage();
