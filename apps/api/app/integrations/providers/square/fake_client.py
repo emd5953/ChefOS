@@ -371,6 +371,11 @@ def _build_order(d: date, i: int, closed: datetime, daypart: str, plan: fd.DayPl
         r_tax = _pct(line_tax[k], 100_000 // qty) if qty else 0
         r_total = unit - r_disc + r_tax
         refund_at = closed + timedelta(seconds=rng.randint(86_400, 3 * 86_400))
+        # Refunds are booked on their processing date. Keep generated refunds after service
+        # has started so an early-evening dashboard does not show returns before any sales.
+        refund_day = refund_at.astimezone(fd.TZ).date()
+        dinner_start = datetime(refund_day.year, refund_day.month, refund_day.day, 18, tzinfo=fd.TZ)
+        refund_at = max(refund_at, dinner_start.astimezone(UTC))
         rli: dict[str, Any] = {
             "uid": "r1",
             "source_line_item_uid": f"l{k + 1}",

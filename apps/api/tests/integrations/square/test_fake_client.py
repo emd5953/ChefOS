@@ -38,6 +38,22 @@ def test_same_window_twice_identical_hashes(client: FakeSquareClient, creds: Cre
     assert a and a == b == c
 
 
+def test_refunds_do_not_post_before_weekday_dinner_sales() -> None:
+    now = datetime(2026, 10, 20, 20, 55, tzinfo=UTC)  # Tuesday, 4:55pm in New York
+    client = FakeSquareClient(clock=lambda: now)
+    creds = client.obtain_token("fake-early-refund", "x")
+    start = datetime(2026, 10, 20, tzinfo=UTC)
+    orders = walk_orders(client, creds, start, start + timedelta(days=1))
+    assert all(
+        datetime.fromisoformat(r["created_at"].replace("Z", "+00:00"))
+        .astimezone(ZoneInfo("America/New_York"))
+        .date()
+        != date(2026, 10, 20)
+        for order in orders
+        for r in order.payload.get("refunds", [])
+    )
+
+
 def test_clock_advance_only_adds_orders() -> None:
     t = {"now": datetime(2026, 5, 20, 22, 0, tzinfo=UTC)}
     c = FakeSquareClient(clock=lambda: t["now"])
