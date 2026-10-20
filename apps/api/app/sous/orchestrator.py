@@ -97,7 +97,8 @@ def _fmt_time(ts: datetime, tz: str) -> str:
 
 
 def limitations(results: list[ToolResult], tz: str) -> list[str]:
-    """One line per stale, failing or not connected stream touched, then one per failed tool."""
+    """One line per stale, failing or not connected stream touched, one per failed tool, and one
+    if item names were hidden."""
     seen: dict[str, tuple[str, datetime | None]] = {}
     for r in results:
         if not r.ok:
@@ -119,6 +120,12 @@ def limitations(results: list[ToolResult], tz: str) -> list[str]:
     lines += [
         f"Tool {r.tool} failed: {r.data.get('error', 'unknown error')}" for r in results if not r.ok
     ]
+    hidden = sum(r.hidden_names for r in results if r.ok)
+    if hidden:
+        lines.append(
+            f"{hidden} item name(s) looked like instructions to an AI and were hidden. "
+            "Check these items in Square."
+        )
     return lines
 
 

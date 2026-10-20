@@ -43,6 +43,7 @@ class ToolResult:
     period: tuple[date, date] | None = None
     freshness: list[FreshnessOut] = field(default_factory=list)
     streams: tuple[str, ...] = ()  # streams the result depends on, for limitations
+    hidden_names: int = 0  # POS text fields withheld as instruction-like, for limitations
 
 
 class DateRange(BaseModel):
@@ -79,9 +80,31 @@ def usd(cents: int | None) -> float | None:
     return None if cents is None else cents / 100
 
 
-def _text(value: str) -> str:
-    """Free text from the POS is data: flatten whitespace and cap the length."""
-    return re.sub(r"\s+", " ", value).strip()[:80]
+# Phrases that read as instructions to an AI. Each needs several words so menu words don't match.
+INSTRUCTION_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"\b(?:ignore|disregard|forget)\s+(?:(?:all|the|any|of)\s+)*"
+        r"(?:previous|prior|above|all|your)\s+(?:\w+\s+)?(?:instructions|rules|prompt)\b",
+        r"\bsystem\s+prompt\b",
+        r"\byou\s+are\s+now\b",
+        r"\bnew\s+instructions\b",
+        # Whitespace is flattened first, so a line start is the text start or a sentence start.
+        r"(?:^|[.!?]\s)(?:assistant|system|user)\s*:",
+        r"\b(?:tell|inform)\s+(?:the\s+)?(?:owner|manager|user)s?\b",
+        r"\b(?:say|respond|reply)\s+(?:with|that)\b",
+    )
+]
+HIDDEN_NAME = "[name hidden]"
+
+
+def _text(value: str) -> tuple[str, bool]:
+    """Free text from the POS is data: flatten whitespace, cap the length, and withhold anything
+    that reads as an instruction. The check runs before the cap so padding can't hide a phrase."""
+    flat = re.sub(r"\s+", " ", value).strip()
+    if any(p.search(flat) for p in INSTRUCTION_PATTERNS):
+        return HIDDEN_NAME, True
+    return flat[:80], False
 
 
 def _check_range(first: date, last: date, today: date, max_days: int) -> int:
@@ -306,22 +329,29 @@ async def _top_items(
     out = await service.items(db, org_id, loc, args.from_, args.to, args.limit)
     freshness = _fresh_out(await location_freshness(db, loc.id))
     orders_at = _as_of(freshness, "orders")
-    items = [
-        {
-            "name": _text(it.name),
-            "category": _text(it.category),
-            "quantity": it.quantity,
-            "net_sales_usd": usd(it.net_sales),
-            "share_pct": it.share_pct,
-        }
-        for it in out.items
-    ]
+    hidden = 0
+    items: list[dict[str, Any]] = []
+    for row in out.items:
+        name, name_hidden = _text(row.name)
+        category, category_hidden = _text(row.category)
+        hidden += name_hidden + category_hidden
+        items.append(
+            {
+                "name": name,
+                "category": category,
+                "quantity": row.quantity,
+                "net_sales_usd": usd(row.net_sales),
+                "share_pct": row.share_pct,
+            }
+        )
     data: dict[str, Any] = {
         "period": _period(args.from_, args.to),
         "item_count": len(items),
         "items": items,
         "unmapped_net_sales_usd": usd(out.unmapped_net_sales),
     }
+    if hidden:
+        data["hidden_names"] = hidden
     if not items:
         data["note"] = "No item sales were recorded in this period."
     evidence: list[Evidence] = []
@@ -350,6 +380,7 @@ async def _top_items(
         period=(args.from_, args.to),
         freshness=freshness,
         streams=("orders", "catalog"),
+        hidden_names=hidden,
     )
 
 
