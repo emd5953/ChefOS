@@ -5,6 +5,7 @@ Add a command by decorating a function with `@command("name")`.
 
 import argparse
 import asyncio
+import uuid
 from collections.abc import Callable, Coroutine
 from typing import Any
 
@@ -138,8 +139,24 @@ async def demo(args: argparse.Namespace) -> int:
         await asyncio.sleep(2)
     print(f"Last {WARM_DAYS} days loaded in {int(time.monotonic() - started)}s.")
     print("The rest of the 13-month backfill continues in the background.")
+    await seed_team(org_id, user_id)
     print(f"\nOpen {DEMO_URL}\n  email:    {DEMO_EMAIL}\n  password: {DEMO_PASSWORD}")
+    print(f"  manager:  {TEAM_GM_EMAIL} (same password)")
+    print(f"  employee: {TEAM_EMPLOYEE_EMAIL} (same password; opens the phone view at /my)")
     return 0
+
+
+TEAM_GM_EMAIL = "gm@chefos.local"
+TEAM_EMPLOYEE_EMAIL = "maya@chefos.local"
+
+
+async def seed_team(org_id: uuid.UUID, owner_user_id: uuid.UUID) -> None:
+    """Team demo data: manager and employee logins (idempotent)."""
+    from app.team import demo as team_demo
+
+    created = await team_demo.seed_logins(org_id, owner_user_id, DEMO_PASSWORD)
+    for email in created:
+        print(f"Seeded login: {email}")
 
 
 def main(argv: list[str] | None = None) -> int:

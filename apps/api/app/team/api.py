@@ -4,17 +4,24 @@ Every /v1/team route requires owner, admin, or manager (`StaffDep`); employees g
 """
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request, Response
 
-from app.security.sessions import OrgSession, StaffDep
-from app.team import service
+from app.identity.schemas import OrgOut, SessionOut, UserOut
+from app.security.sessions import OrgSession, StaffDep, set_session_cookie
+from app.team import invitations, service
 from app.team.schemas import (
     EmployeeCreate,
     EmployeeList,
     EmployeeOut,
     EmployeeUpdate,
+    InvitationAccept,
+    InvitationCreate,
+    InvitationCreated,
+    InvitationList,
+    InvitationOut,
+    InvitationPreview,
     MergeRequest,
     PositionCreate,
     PositionList,
@@ -28,6 +35,7 @@ from app.team.schemas import (
 
 router = APIRouter()
 team = APIRouter(prefix="/v1/team", tags=["team"])
+public = APIRouter(prefix="/v1/invitations", tags=["team"])
 
 LocationId = Annotated[uuid.UUID, Query()]
 
@@ -121,4 +129,58 @@ async def update_station(
     return StationOut.model_validate(station)
 
 
+# ---------------------------------------------------------------- invitations
+
+
+@team.post("/invitations", status_code=201, response_model=InvitationCreated)
+async def create_invitation(
+    body: InvitationCreate, ctx: StaffDep, db: OrgSession
+) -> InvitationCreated:
+    inv, token = await invitations.create_invitation(db, await service.scope_for(ctx), body)
+    return InvitationCreated(invitation=inv, accept_url=invitations.accept_url(token))
+
+
+@team.get("/invitations", response_model=InvitationList)
+async def list_invitations(
+    ctx: StaffDep,
+    db: OrgSession,
+    status: Literal["pending", "accepted", "revoked", "expired"] | None = None,
+) -> InvitationList:
+    rows = await invitations.list_invitations(db, await service.scope_for(ctx), status)
+    return InvitationList(data=rows)
+
+
+@team.post("/invitations/{id}/revoke", response_model=InvitationOut)
+async def revoke_invitation(id: uuid.UUID, ctx: StaffDep, db: OrgSession) -> InvitationOut:
+    return await invitations.revoke_invitation(db, await service.scope_for(ctx), id)
+
+
+@public.get("/{token}", response_model=InvitationPreview)
+async def preview_invitation(token: str) -> InvitationPreview:
+    """No auth: the token is the credential."""
+    return await invitations.preview(token)
+
+
+@public.post("/{token}/accept", status_code=201, response_model=SessionOut)
+async def accept_invitation(
+    token: str, body: InvitationAccept, request: Request, response: Response
+) -> SessionOut:
+    """No auth or CSRF: the single-use token is the credential. Throttled per IP like login."""
+    result = await invitations.accept(
+        token,
+        body.display_name,
+        body.password,
+        user_agent=request.headers.get("user-agent"),
+        ip=request.client.host if request.client else None,
+    )
+    set_session_cookie(response, result.token)
+    return SessionOut(
+        user=UserOut.model_validate(result.user),
+        org=OrgOut.model_validate(result.org),
+        role=result.role,
+        csrf_token=result.record.csrf_token,
+    )
+
+
 router.include_router(team)
+router.include_router(public)

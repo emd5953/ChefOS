@@ -22,8 +22,10 @@ from sqlalchemy import (
     Numeric,
     String,
     UniqueConstraint,
+    Uuid,
     text,
 )
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import DateTime
 
@@ -161,3 +163,34 @@ class EmployeeLocation(Base):
         ForeignKey("staff_members.id", ondelete="CASCADE"), primary_key=True
     )
     location_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("locations.id"), primary_key=True)
+
+
+class Invitation(Base):
+    """A single-use login invitation. Only the SHA-256 of the token is stored; the link is shown
+    once. Acceptance runs before any org scope exists, so it resolves the token through the
+    `invitation_for_token` SECURITY DEFINER function (app.db.lookup_invitation)."""
+
+    __tablename__ = "invitations"
+    __table_args__ = (
+        CheckConstraint("role IN ('manager', 'employee')", name="role"),
+        Index("ix_invitations_org_id_created_at", "org_id", "created_at"),
+        Index("ix_invitations_employee_id", "employee_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=new_id)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
+    email: Mapped[str] = mapped_column(CIText())
+    role: Mapped[str] = mapped_column(String)
+    employee_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("staff_members.id"), default=None
+    )
+    location_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(Uuid()), default=list)
+    token_hash: Mapped[str] = mapped_column(String, unique=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, server_default=_NOW
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    accepted_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), default=None)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

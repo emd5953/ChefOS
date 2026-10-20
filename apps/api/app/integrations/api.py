@@ -29,7 +29,7 @@ from app.integrations.schemas import (
     SyncRequest,
     WorkflowStarted,
 )
-from app.security.sessions import AuthDep, OrgSession, require_role
+from app.security.sessions import OrgSession, StaffDep, require_role
 
 log = structlog.get_logger()
 router = APIRouter(prefix="/v1", tags=["integrations"])
@@ -38,7 +38,7 @@ MAX_BACKFILL_DAYS = 800
 
 
 @router.post("/integrations/square/authorize", response_model=AuthorizeOut)
-async def authorize(ctx: AuthDep, db: OrgSession) -> AuthorizeOut:
+async def authorize(ctx: StaffDep, db: OrgSession) -> AuthorizeOut:
     require_role(ctx, _ADMINS)
     return AuthorizeOut(authorize_url=await service.start_authorize(db, ctx.org_id, ctx.user_id))
 
@@ -76,7 +76,7 @@ async def callback(
 
 
 @router.get("/integrations/connections", response_model=ConnectionList)
-async def list_connections(ctx: AuthDep, db: OrgSession) -> ConnectionList:
+async def list_connections(ctx: StaffDep, db: OrgSession) -> ConnectionList:
     rows = await db.scalars(
         select(IntegrationConnection)
         .where(IntegrationConnection.status != "disconnected")
@@ -87,7 +87,7 @@ async def list_connections(ctx: AuthDep, db: OrgSession) -> ConnectionList:
 
 @router.get("/integrations/connections/{connection_id}", response_model=ConnectionDetailOut)
 async def get_connection(
-    connection_id: uuid.UUID, ctx: AuthDep, db: OrgSession
+    connection_id: uuid.UUID, ctx: StaffDep, db: OrgSession
 ) -> ConnectionDetailOut:
     conn = await service.get_live_connection(db, connection_id)
     return await service.connection_detail(db, conn)
@@ -95,7 +95,7 @@ async def get_connection(
 
 @router.patch("/integrations/connections/{connection_id}/locations", response_model=ConnectionOut)
 async def patch_locations(
-    connection_id: uuid.UUID, body: LinksPatch, ctx: AuthDep
+    connection_id: uuid.UUID, body: LinksPatch, ctx: StaffDep
 ) -> ConnectionOut:
     require_role(ctx, _ADMINS)
     newly = await service.patch_links(
@@ -118,7 +118,7 @@ async def patch_locations(
     response_model=WorkflowStarted,
 )
 async def sync_now(
-    connection_id: uuid.UUID, ctx: AuthDep, db: OrgSession, body: SyncRequest | None = None
+    connection_id: uuid.UUID, ctx: StaffDep, db: OrgSession, body: SyncRequest | None = None
 ) -> WorkflowStarted:
     require_role(ctx, _ADMINS)
     conn = await service.get_live_connection(db, connection_id)
@@ -139,7 +139,7 @@ async def sync_now(
     response_model=WorkflowStarted,
 )
 async def backfill(
-    connection_id: uuid.UUID, body: BackfillRequest, ctx: AuthDep, db: OrgSession
+    connection_id: uuid.UUID, body: BackfillRequest, ctx: StaffDep, db: OrgSession
 ) -> WorkflowStarted:
     require_role(ctx, _ADMINS)
     if body.from_date > body.to_date:
@@ -159,7 +159,7 @@ async def backfill(
 
 
 @router.delete("/integrations/connections/{connection_id}", status_code=204)
-async def disconnect(connection_id: uuid.UUID, ctx: AuthDep) -> Response:
+async def disconnect(connection_id: uuid.UUID, ctx: StaffDep) -> Response:
     require_role(ctx, _ADMINS)
     await service.disconnect(ctx.org_id, connection_id)
     return Response(status_code=204)
@@ -167,7 +167,7 @@ async def disconnect(connection_id: uuid.UUID, ctx: AuthDep) -> Response:
 
 @router.get("/integrations/mapping-issues", response_model=MappingIssueList)
 async def mapping_issues(
-    ctx: AuthDep, db: OrgSession, status: Literal["open", "resolved"] = Query("open")
+    ctx: StaffDep, db: OrgSession, status: Literal["open", "resolved"] = Query("open")
 ) -> MappingIssueList:
     return MappingIssueList(data=await service.list_issues(db, status))
 
@@ -176,7 +176,7 @@ async def mapping_issues(
     "/integrations/mapping-issues/{issue_id}/candidates", response_model=MappingCandidateList
 )
 async def mapping_candidates(
-    issue_id: uuid.UUID, ctx: AuthDep, db: OrgSession
+    issue_id: uuid.UUID, ctx: StaffDep, db: OrgSession
 ) -> MappingCandidateList:
     require_role(ctx, _ADMINS)
     return MappingCandidateList(data=await service.mapping_candidates(db, issue_id))
@@ -184,7 +184,7 @@ async def mapping_candidates(
 
 @router.post("/integrations/mapping-issues/{issue_id}/resolve", response_model=MappingIssueOut)
 async def resolve_issue(
-    issue_id: uuid.UUID, body: ResolveRequest, ctx: AuthDep, db: OrgSession
+    issue_id: uuid.UUID, body: ResolveRequest, ctx: StaffDep, db: OrgSession
 ) -> MappingIssueOut:
     require_role(ctx, _ADMINS)
     return await service.resolve_issue(

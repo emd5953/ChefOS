@@ -21,7 +21,14 @@ from app.audit import service as audit
 from app.errors import ProblemError, forbidden, not_found, validation_error
 from app.identity.models import Location
 from app.security.sessions import AuthContext
-from app.team.models import EmployeeLocation, EmployeePosition, Position, StaffMember, Station
+from app.team.models import (
+    EmployeeLocation,
+    EmployeePosition,
+    Invitation,
+    Position,
+    StaffMember,
+    Station,
+)
 from app.team.schemas import (
     EmployeeCreate,
     EmployeeOut,
@@ -114,6 +121,21 @@ async def _employee_positions(
     return out
 
 
+async def _invited(db: AsyncSession, ids: list[uuid.UUID]) -> set[uuid.UUID]:
+    """Employees with a live pending invitation."""
+    if not ids:
+        return set()
+    rows = await db.scalars(
+        select(Invitation.employee_id).where(
+            Invitation.employee_id.in_(ids),
+            Invitation.accepted_at.is_(None),
+            Invitation.revoked_at.is_(None),
+            Invitation.expires_at > func.now(),
+        )
+    )
+    return {r for r in rows if r is not None}
+
+
 def effective_rate(emp: StaffMember) -> int | None:
     """rate_override ?? POS hourly_rate ?? None. None is shown as "no rate", never guessed."""
     return emp.rate_override if emp.rate_override is not None else emp.hourly_rate
@@ -123,9 +145,12 @@ async def employees_out(db: AsyncSession, emps: Sequence[StaffMember]) -> list[E
     ids = [e.id for e in emps]
     positions = await _employee_positions(db, ids)
     locations = await employee_location_ids(db, ids)
+    invited = await _invited(db, [e.id for e in emps if e.user_id is None])
     out = []
     for e in emps:
-        login: LoginStatus = "active" if e.user_id is not None else "none"
+        login: LoginStatus = (
+            "active" if e.user_id is not None else "invited" if e.id in invited else "none"
+        )
         out.append(
             EmployeeOut(
                 id=e.id,
@@ -182,7 +207,7 @@ async def list_employees(
     return await employees_out(db, emps)
 
 
-async def _check_locations(
+async def check_locations(
     db: AsyncSession, scope: Scope, ids: Iterable[uuid.UUID]
 ) -> set[uuid.UUID]:
     wanted = set(ids)
@@ -249,7 +274,7 @@ def _changes(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
 
 
 async def create_employee(db: AsyncSession, scope: Scope, data: EmployeeCreate) -> EmployeeOut:
-    locations = await _check_locations(db, scope, data.location_ids)
+    locations = await check_locations(db, scope, data.location_ids)
     await _check_positions(db, scope.org_id, data.positions)
     emp = StaffMember(
         org_id=scope.org_id,
@@ -309,7 +334,7 @@ async def update_employee(
 
     before = await _snapshot(db, emp)
     if "location_ids" in fields and data.location_ids is not None:
-        wanted = await _check_locations(db, scope, data.location_ids)
+        wanted = await check_locations(db, scope, data.location_ids)
         current = (await employee_location_ids(db, [emp.id])).get(emp.id, set())
         # A manager edits only the locations they can see; the others are kept as they are.
         target = wanted if scope.is_admin else (current - scope.location_ids) | wanted

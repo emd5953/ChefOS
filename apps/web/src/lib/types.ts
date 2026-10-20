@@ -257,3 +257,26 @@ export type EmployeePatch = Partial<Omit<EmployeeCreate, "positions">> & {
   positions?: PositionRef[];
   active?: boolean;
 };
+
+export type InvitationStatus = "pending" | "accepted" | "revoked" | "expired";
+export type Invitation = {
+  id: string;
+  email: string;
+  role: "manager" | "employee";
+  employee_id: string | null;
+  employee_name: string | null;
+  location_ids: string[];
+  status: InvitationStatus;
+  created_at: string;
+  expires_at: string;
+  accepted_at: string | null;
+};
+/** `accept_url` is shown once: only its hash is stored. */
+export type InvitationCreated = { invitation: Invitation; accept_url: string };
+export type InvitationPreview = {
+  org_name: string;
+  email: string;
+  role: "manager" | "employee";
+  employee_name: string | null;
+  expires_at: string;
+};

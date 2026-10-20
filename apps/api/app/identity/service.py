@@ -168,6 +168,17 @@ async def login(email: str, password: str, *, user_agent: str | None, ip: str | 
         return LoggedIn(token, record, user, org, membership.role)
 
 
+async def check_throttle(limits: dict[str, int], now: datetime) -> None:
+    """Throttle check for unauthenticated flows other than login (invitation acceptance)."""
+    async with unscoped_session() as db:
+        await throttle.check(db, limits, now)
+
+
+async def record_throttle_failure(limits: dict[str, int], now: datetime) -> None:
+    async with unscoped_session() as db:  # own transaction: commits though the request fails
+        await throttle.record_failure(db, limits, now)
+
+
 async def logout_audit(db: AsyncSession, org_id: uuid.UUID, user_id: uuid.UUID) -> None:
     await audit.record(
         db,

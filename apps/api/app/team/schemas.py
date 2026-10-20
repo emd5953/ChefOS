@@ -176,3 +176,53 @@ class EmployeeUpdate(BaseModel):
 
 class MergeRequest(BaseModel):
     into_id: uuid.UUID
+
+
+# ---------------------------------------------------------------- invitations
+
+InvitationStatus = Literal["pending", "accepted", "revoked", "expired"]
+
+
+class InvitationCreate(BaseModel):
+    """Invite an employee record (email defaults to the employee's) or, with no employee, a
+    manager by email."""
+
+    employee_id: uuid.UUID | None = None
+    email: Email | None = None
+    role: Literal["manager", "employee"] = "employee"
+    location_ids: Annotated[LocationIds, Field(min_length=1)]
+
+
+class InvitationOut(BaseModel):
+    id: uuid.UUID
+    email: str
+    role: Literal["manager", "employee"]
+    employee_id: uuid.UUID | None
+    employee_name: str | None
+    location_ids: list[uuid.UUID]
+    status: InvitationStatus
+    created_at: datetime
+    expires_at: datetime
+    accepted_at: datetime | None
+
+
+class InvitationList(BaseModel):
+    data: list[InvitationOut]
+
+
+class InvitationCreated(BaseModel):
+    invitation: InvitationOut
+    accept_url: str  # shown once; only its hash is stored
+
+
+class InvitationPreview(BaseModel):
+    org_name: str
+    email: str
+    role: Literal["manager", "employee"]
+    employee_name: str | None
+    expires_at: datetime
+
+
+class InvitationAccept(BaseModel):
+    display_name: PersonName
+    password: Annotated[str, Field(max_length=256)]

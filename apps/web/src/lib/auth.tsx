@@ -42,3 +42,8 @@ export function useSession(): Session {
 export function canManage(role: Session["role"]): boolean {
   return role === "owner" || role === "admin";
 }
+
+/** Where a role lands after login: employees get the phone view. */
+export function homeFor(role: Session["role"]): string {
+  return role === "employee" ? "/my" : "/app";
+}

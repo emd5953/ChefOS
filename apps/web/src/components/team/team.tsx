@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Users } from "lucide-react";
+import { Plus, UserPlus, Users } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { PageHeader } from "@/components/page-header";
@@ -15,12 +15,14 @@ import { TableSkeleton } from "@/components/ui/skeleton";
 import { EmptyState, ErrorState } from "@/components/ui/states";
 import { useToast } from "@/components/ui/toast";
 import { api, errorMessage, isApiError } from "@/lib/api";
+import { canManage, useSession } from "@/lib/auth";
 import { formatMoney } from "@/lib/format";
 import { useLocationScope } from "@/lib/location-scope";
 import { keys, useEmployees, usePositions } from "@/lib/queries";
 import type { Employee, EmployeeCreate, Location, PositionRef } from "@/lib/types";
 import { LocationsPicker, PositionsPicker, RateField } from "./employee-form";
 import { EmployeeSheet } from "./employee-sheet";
+import { InviteManagerDialog, InvitePanel } from "./invite-panel";
 import { Positions } from "./positions";
 import { Checkbox, LoginBadge, PositionChip, Tabs, parseDollars } from "./shared";
 
@@ -30,6 +32,8 @@ export function Team() {
   const router = useRouter();
   const pathname = usePathname();
   const search = useSearchParams();
+  const { role } = useSession();
+  const [invitingManager, setInvitingManager] = useState(false);
   const tab: Tab = search.get("tab") === "positions" ? "positions" : "employees";
   const setTab = (t: Tab) => {
     const sp = new URLSearchParams(search.toString());
@@ -44,6 +48,13 @@ export function Team() {
         overline="Team"
         title="Team"
         description="Everyone on the schedule: who they are, what they do, where they work, and whether they can log in."
+        actions={
+          canManage(role) ? (
+            <Button variant="outline" onClick={() => setInvitingManager(true)}>
+              <UserPlus aria-hidden /> Invite manager
+            </Button>
+          ) : undefined
+        }
       />
       <div className="mb-5">
         <Tabs
@@ -56,6 +67,7 @@ export function Team() {
           ]}
         />
       </div>
+      <InviteManagerDialog open={invitingManager} onClose={() => setInvitingManager(false)} />
       {tab === "positions" ? <Positions /> : <PosGate requirePos={false}>{(loc) => <Employees location={loc} />}</PosGate>}
     </>
   );
@@ -120,7 +132,12 @@ function Employees({ location }: { location: Location }) {
           </table>
         </div>
       )}
-      <EmployeeSheet employee={open} others={rows} onClose={() => setOpenId(null)} />
+      <EmployeeSheet
+        employee={open}
+        others={rows}
+        onClose={() => setOpenId(null)}
+        footer={(e) => <InvitePanel employee={e} />}
+      />
       <AddEmployeeDialog open={adding} onClose={() => setAdding(false)} location={location} />
     </Card>
   );

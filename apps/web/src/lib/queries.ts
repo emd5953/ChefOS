@@ -8,6 +8,7 @@ import type {
   ConnectionDetail,
   DailyResponse,
   Employee,
+  Invitation,
   ItemsResponse,
   List,
   Location,
@@ -37,6 +38,7 @@ export const keys = {
   employees: (loc: string, inactive: boolean) => ["team", "employees", loc, inactive] as const,
   positions: (archived: boolean) => ["team", "positions", archived] as const,
   stations: (loc: string) => ["team", "stations", loc] as const,
+  invitations: ["team", "invitations"] as const,
   team: ["team"] as const,
 };
 
@@ -197,5 +199,13 @@ export function useStations(locationId: string | undefined) {
     queryKey: keys.stations(locationId ?? ""),
     queryFn: async () => (await api<List<Station>>("/v1/team/stations", { query: { location_id: locationId } })).data,
     enabled: !!locationId,
+  });
+}
+
+export function useInvitations() {
+  return useQuery({
+    queryKey: keys.invitations,
+    queryFn: async () =>
+      (await api<List<Invitation>>("/v1/team/invitations", { query: { status: "pending" } })).data,
   });
 }

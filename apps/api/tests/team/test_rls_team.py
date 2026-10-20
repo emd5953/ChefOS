@@ -6,10 +6,13 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
-from app.db import scoped_session
+from app.db import get_engine, lookup_invitation, scoped_session
 from tests.team.conftest import Clock, Connect, Connected, import_team
 
-TABLES = ["staff_members", "positions", "employee_positions", "stations", "employee_locations"]
+TABLES = [
+    "staff_members", "positions", "employee_positions", "stations", "employee_locations",
+    "invitations",
+]  # fmt: skip
 
 
 @pytest.fixture
@@ -23,7 +26,31 @@ async def two(connect: Connect, clock: Clock) -> tuple[Connected, Connected]:
             headers=c.headers,
         )
         assert r.status_code == 201, r.text
+        r = await c.client.post(
+            "/v1/team/invitations",
+            json={
+                "role": "manager",
+                "email": "x@example.com",
+                "location_ids": [str(c.location_id)],
+            },
+            headers=c.headers,
+        )
+        assert r.status_code == 201, r.text
     return a, b
+
+
+async def test_invitation_lookup_returns_only_ids(two: tuple[Connected, Connected]) -> None:
+    a, _ = two
+    assert await lookup_invitation("0" * 64) is None
+    async with scoped_session(a.org_id) as db:
+        token_hash = await db.scalar(text("SELECT token_hash FROM invitations"))
+    found = await lookup_invitation(token_hash)
+    assert found is not None and found[1] == a.org_id
+    async with get_engine().connect() as conn:
+        cols = (
+            await conn.execute(text("SELECT * FROM invitation_for_token(:h)"), {"h": token_hash})
+        ).keys()
+    assert list(cols) == ["invitation_id", "org_id"]
 
 
 async def test_other_org_sees_nothing_and_changes_nothing(two: tuple[Connected, Connected]) -> None:

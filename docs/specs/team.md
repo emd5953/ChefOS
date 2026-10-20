@@ -1,6 +1,6 @@
 # Team (Phase 3)
 
-**Status:** In progress (T1 built) · **Last updated:** 2026-10-20
+**Status:** In progress (T1–T2 built) · **Last updated:** 2026-10-20
 **Related:** [PRD](../prd.md) (TEAM-1 to TEAM-4, MOB-1), [Roadmap](../roadmap.md), [Architecture](../architecture.md), [Integration layer](integration-layer.md), [ADR 0002](../adr/0002-production-stack.md)
 
 ## Problem
@@ -78,13 +78,13 @@ time_off_requests(id, org_id, employee_id, starts_on date, ends_on date, start_t
   created_at, decided_by, decided_at, decision_note)
 ```
 
-Invitation acceptance happens before any org scope exists. Like `integration_connection_for_account`, a narrow `SECURITY DEFINER` function `invitation_for_token(p_hash) → (invitation_id, org_id)` is the only way around RLS. It returns nothing for expired, revoked, or accepted invitations.
+Invitation acceptance happens before any org scope exists. Like `integration_connection_for_account`, a narrow `SECURITY DEFINER` function `invitation_for_token(p_hash) → (invitation_id, org_id)` is the only way around RLS (`app.db.lookup_invitation`). It returns nothing for expired, revoked, or accepted invitations. Everything after the lookup runs in one transaction scoped to that org (`users` and `sessions` have no RLS), so `unscoped_session` stays confined to the auth code; the throttle check goes through two small `app.identity.service` helpers.
 
 ### Employee linking
 
 - **POS → employee.** Unchanged path: `process_team_members` creates or updates a `staff_members` row and its `external_refs` entry. Two additions: the Square normalizer also returns `email_address` and `assigned_locations`, and the pipeline then calls `team.service.on_staff_imported(db, org_id, ids)`. That hook (a) sets `email` if empty, (b) inserts `employee_locations` for assigned locations that are linked on the connection (insert-only, never removes), and (c) creates a `positions` row per distinct job title and assigns it as primary if the employee has no positions at all (so an employee whose positions a manager cleared gets the POS title back on the next sync; one with any position is left alone). The pipeline's upsert writes only name, job title, POS rate, and active, and only when they changed. An active-to-inactive transition writes one `employee.deactivated_by_pos` event (the only per-row sync event). Unlinked timecard-only members still go through the existing `unmapped_team_member` mapping queue.
 - **Manual employees** (`source = 'manual'`) cover staff who aren't in the POS. If the same person later appears from Square, the duplicate is resolved with **merge** (`from → into`): repoints `external_refs`, `timecards`, `shifts`, requests, and `user_id` to `into`, unions positions and locations, fills `into`'s empty email/phone/rate override from `from`, then sets `from.active = false, merged_into_id = into`. If `from` is POS-linked, `into` becomes `source = 'square'` and takes `from`'s POS-owned fields, since sync now writes to it. One transaction, one audit event. Merge is refused if both records have a `user_id` or either was already merged.
-- **Employee → user.** `staff_members.user_id` is 0..1 per org (architecture: `Employee 0..1─1 User`). It's set only by accepting an invitation created from that employee record, which pre-fills the email from Square. Accepting creates the `users` row (or 409 if the email already has an account, see Risks), a `memberships` row with the invited role, `location_access` rows, and links the employee. Tokens are 256-bit, stored as SHA-256, valid 7 days, single use.
+- **Employee → user.** `staff_members.user_id` is 0..1 per org (architecture: `Employee 0..1─1 User`). It's set only by accepting an invitation created from that employee record, which pre-fills the email from Square (the inviter may override it). An invitation without `employee_id` invites a manager who isn't on the schedule (owner/admin only); `email` is then required. A new invitation for the same employee revokes the pending one. The accept link is `{WEB_ORIGIN}/invite/{token}`. Acceptance is throttled by sharing the per-IP failed-login counter: each invalid token counts as a failure. Accepting creates the `users` row (or 409 if the email already has an account, see Risks), a `memberships` row with the invited role, `location_access` rows, and links the employee. Tokens are 256-bit, stored as SHA-256, valid 7 days, single use.
 - **Effective rate** for projections = `rate_override` ?? POS `hourly_rate` ?? null. Null is shown as "no rate" and excluded from cost (flagged, not guessed).
 
 ### Forecast and projected labor
@@ -97,7 +97,7 @@ Why this method: restaurant demand is dominated by day-of-week (the simulated se
 
 ### Service and HTTP API
 
-Module `app/team/` (`models.py`, `schemas.py`, `service.py`, `forecast.py`, `notify.py`, `api.py`). Location scope uses `ctx.allowed_location_ids()` as Commerce does. **Manage** = owner, admin, or manager with access to the location. A manager sees employees assigned to at least one of their locations; editing an employee's locations only adds or removes locations the manager can access. Managers may invite only the `employee` role and can't merge employees. Positions are org-wide and can be archived (hidden from pickers, kept on existing records); stations belong to a location. A new `require_staff_role` dependency (owner/admin/manager) is added to Commerce, Sous, Integrations, and location-write routes so `employee` sessions get 403.
+Module `app/team/` (`models.py`, `schemas.py`, `service.py`, `forecast.py`, `notify.py`, `api.py`). Location scope uses `ctx.allowed_location_ids()` as Commerce does. **Manage** = owner, admin, or manager with access to the location. A manager sees employees assigned to at least one of their locations; editing an employee's locations only adds or removes locations the manager can access. Managers may invite only the `employee` role and can't merge employees. Positions are org-wide and can be archived (hidden from pickers, kept on existing records); stations belong to a location. A new `require_staff_role` dependency (`StaffDep`, owner/admin/manager) is added to Commerce, Sous, Integrations, and every `/v1/team/*` route so `employee` sessions get 403 (location writes were already owner/admin only). Employees keep `/v1/auth/*`, `GET /v1/org`, `GET /v1/locations`, `/v1/me/*`, and `/v1/notifications`.
 
 ```
 GET    /v1/team/employees?location_id&include_inactive        → { data: Employee[] }        manage
@@ -106,7 +106,7 @@ PATCH  /v1/team/employees/{id} ← team-owned fields only; POS-owned field → 4
 POST   /v1/team/employees/{id}/merge ← { into_id }                                       owner/admin
 GET|POST|PATCH /v1/team/positions[/{id}]      GET|POST|PATCH /v1/team/stations[/{id}]?location_id
 
-POST   /v1/team/invitations    ← { employee_id, role, location_ids } → 201 { invitation, accept_url }  (URL shown once)
+POST   /v1/team/invitations    ← { employee_id?, email?, role, location_ids } → 201 { invitation, accept_url }  (URL shown once)
 GET    /v1/team/invitations?status=pending    POST /v1/team/invitations/{id}/revoke
 GET    /v1/invitations/{token}                → { org_name, email, role, employee_name, expires_at }   (no auth)
 POST   /v1/invitations/{token}/accept ← { display_name, password } → 201 + session cookie (no auth, throttled)
@@ -166,7 +166,7 @@ Why: it reuses cookie sessions, CSRF, `api.ts`, the query layer, types, and the 
 
 ### Seed
 
-`make demo` adds a manager (`gm@chefos.local`) and an employee login linked to imported "Maya Okafor" (`maya@chefos.local`), plus a published current week built from the simulator's shift pattern, so the walkthrough needs no manual setup.
+`make demo` adds a manager (`gm@chefos.local`, every location, no employee record) and an employee login linked to imported "Maya Okafor" (`maya@chefos.local`), both through the real invite-and-accept path and with the demo owner's password, plus a published current week built from the simulator's shift pattern, so the walkthrough needs no manual setup (`app/team/demo.py`, idempotent).
 
 ## Behavior
 

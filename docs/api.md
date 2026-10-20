@@ -19,7 +19,7 @@ The browser reaches the API only through the Next.js origin: `http://localhost:3
   "detail": "…", "request_id": "…", "errors": { "email": "Already registered" } }
 ```
 
-  `code` values: `validation_error`, `unauthenticated`, `session_expired`, `csrf_failed`, `forbidden`, `not_found`, `conflict`, `unavailable`, `internal_error`, `rate_limited`, `sous_unavailable`, `pos_owned_field`.
+  `code` values: `validation_error`, `unauthenticated`, `session_expired`, `csrf_failed`, `forbidden`, `not_found`, `conflict`, `unavailable`, `internal_error`, `rate_limited`, `sous_unavailable`, `pos_owned_field`, `invitation_invalid` (410), `email_has_account`.
 - Every response carries `X-Request-ID`.
 - Lists are `{ "data": [...] }`.
 
@@ -83,6 +83,8 @@ type Totals       = { net_sales: number; gross_sales: number; discounts: number;
 | GET | `/v1/auth/me` | none | `200 { user, org, role, csrf_token }` or `401` |
 
 Password minimum is 12 characters. `timezone` is an IANA name.
+
+**Roles.** `owner` and `admin` see everything. `manager` sees the locations in its `location_access`. `employee` sessions are limited to `/v1/auth/*`, `GET /v1/org`, `GET /v1/locations`, `/v1/me/*`, and `/v1/notifications`: every Commerce, Sous, Integrations, and `/v1/team/*` route returns `403 forbidden` for them. The web app sends employees to `/my`.
 
 ## Org and locations
 
@@ -193,6 +195,29 @@ type PositionRef = { position_id: string; is_primary?: boolean }   // first one 
 - **Locations.** A manager's `location_ids` edit only touches locations they can access; the employee's other locations are kept.
 - **Merge** (`{id}` into `into_id`) repoints external refs, timecards, and later shifts and requests, moves the login, unions positions and locations, then sets `{id}` inactive with `merged_into_id`. If `{id}` came from Square, the survivor becomes POS-linked. `409` if both have logins or either was already merged.
 - **POS import.** After each team member sync, empty emails are filled from Square, assigned linked locations are added (never removed; "all locations" means every linked location), and each job title becomes a position, set as primary on employees that have no positions.
+
+### Invitations
+
+Logins are created only by accepting an invitation. Links are shared by hand (no email delivery). Tokens are 256-bit, stored as SHA-256, valid 7 days, single use.
+
+```ts
+type Invitation = { id: string; email: string; role: "manager" | "employee";
+                    employee_id: string | null; employee_name: string | null; location_ids: string[];
+                    status: "pending" | "accepted" | "revoked" | "expired";
+                    created_at: string; expires_at: string; accepted_at: string | null }
+```
+
+| Method | Path | Body | Response |
+| --- | --- | --- | --- |
+| POST | `/v1/team/invitations` | `{ employee_id?, email?, role: "employee" \| "manager", location_ids }` | `201 { invitation, accept_url }`. `accept_url` (`{WEB_ORIGIN}/invite/{token}`) is shown once |
+| GET | `/v1/team/invitations?status=pending\|accepted\|revoked\|expired` | none | `200 { data: Invitation[] }` (newest first) |
+| POST | `/v1/team/invitations/{id}/revoke` | none | `200 Invitation`. `409` if already accepted |
+| GET | `/v1/invitations/{token}` | none (no auth) | `200 { org_name, email, role, employee_name, expires_at }` or `410 invitation_invalid` |
+| POST | `/v1/invitations/{token}/accept` | `{ display_name, password }` (no auth, no CSRF) | `201 { user, org, role, csrf_token }` + session cookie |
+
+- `email` defaults to the employee's email; without `employee_id` it is required (a manager who isn't on the schedule). A new invitation for the same employee (or email) revokes the pending one.
+- Managers may invite only `role: "employee"` and only to their locations; `employee_id` must be active and without a login (`409`).
+- Accepting creates the user, the membership with the invited role, `location_access` for the invited locations, and the employee link, in one transaction with a session. `410 invitation_invalid` for expired, revoked, or used tokens; `409 email_has_account` if the email already has a ChefOS login (users belong to one org in v1); `422` for a weak password. Invalid tokens count against the same per-IP limit as failed logins (`429`).
 
 ### Positions and stations
 

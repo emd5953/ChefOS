@@ -154,6 +154,7 @@ PUBLIC_UNSAFE = {
     ("POST", "/v1/auth/signup"),
     ("POST", "/v1/auth/login"),
     ("POST", "/v1/webhooks/square"),  # HMAC-verified instead of session auth
+    ("POST", "/v1/invitations/{token}/accept"),  # the single-use invitation token is the credential
 }
 
 

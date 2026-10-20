@@ -9,7 +9,7 @@ from fastapi import APIRouter, Query
 from app.commerce import service
 from app.commerce.schemas import DailyOut, ItemsOut, SummaryOut, TodayOut
 from app.identity.models import Location
-from app.security.sessions import AuthDep, OrgSession
+from app.security.sessions import OrgSession, StaffDep
 
 router = APIRouter(prefix="/v1/commerce", tags=["commerce"])
 
@@ -18,13 +18,13 @@ From = Annotated[date, Query(alias="from")]
 To = Annotated[date, Query(alias="to")]
 
 
-async def _location(ctx: AuthDep, db: OrgSession, location_id: uuid.UUID) -> Location:
+async def _location(ctx: StaffDep, db: OrgSession, location_id: uuid.UUID) -> Location:
     return await service.get_location(db, await ctx.allowed_location_ids(), location_id)
 
 
 @router.get("/daily", response_model=DailyOut)
 async def daily(
-    ctx: AuthDep, db: OrgSession, location_id: LocationId, from_: From, to: To
+    ctx: StaffDep, db: OrgSession, location_id: LocationId, from_: From, to: To
 ) -> DailyOut:
     loc = await _location(ctx, db, location_id)
     return await service.daily(db, ctx.org_id, loc, from_, to)
@@ -32,7 +32,7 @@ async def daily(
 
 @router.get("/summary", response_model=SummaryOut)
 async def summary(
-    ctx: AuthDep,
+    ctx: StaffDep,
     db: OrgSession,
     location_id: LocationId,
     from_: From,
@@ -45,7 +45,7 @@ async def summary(
 
 @router.get("/items", response_model=ItemsOut)
 async def items(
-    ctx: AuthDep,
+    ctx: StaffDep,
     db: OrgSession,
     location_id: LocationId,
     from_: From,
@@ -57,6 +57,6 @@ async def items(
 
 
 @router.get("/today", response_model=TodayOut)
-async def today(ctx: AuthDep, db: OrgSession, location_id: LocationId) -> TodayOut:
+async def today(ctx: StaffDep, db: OrgSession, location_id: LocationId) -> TodayOut:
     loc = await _location(ctx, db, location_id)
     return await service.today(db, ctx.org_id, loc)
