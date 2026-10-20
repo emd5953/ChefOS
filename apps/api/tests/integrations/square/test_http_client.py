@@ -99,8 +99,19 @@ def test_timecard_search_endpoint() -> None:
 
     page = make(handler).search_timecards(CREDS, ["L1"], date(2026, 1, 1), date(2026, 1, 3), None)
     assert seen[0].url.path == "/v2/labor/timecards/search"
-    wd = json.loads(seen[0].content)["query"]["filter"]["workday"]
-    assert wd["date_range"] == {"start_date": "2026-01-01", "end_date": "2026-01-03"}
+    assert json.loads(seen[0].content) == {
+        "query": {
+            "filter": {
+                "location_ids": ["L1"],
+                "workday": {
+                    "date_range": {"start_date": "2026-01-01", "end_date": "2026-01-03"},
+                    "match_timecards_by": "START_AT",
+                },
+            },
+            "sort": {"field": "START_AT", "order": "ASC"},
+        },
+        "limit": 200,
+    }
     assert page.items[0].external_id == "TC1"
 
 

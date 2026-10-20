@@ -242,7 +242,7 @@ class HttpSquareClient:
                             "start_date": workday_from.isoformat(),
                             "end_date": workday_to.isoformat(),
                         },
-                        "match_timecards_on": "START_AT",
+                        "match_timecards_by": "START_AT",
                     },
                 },
                 "sort": {"field": "START_AT", "order": "ASC"},

@@ -10,9 +10,10 @@ from pathlib import Path
 from typing import Any
 
 _HOST = os.environ.get("TEST_DB_HOST", "localhost:5432")
-os.environ["DATABASE_URL"] = f"postgresql+asyncpg://chefos_app:chefos_app@{_HOST}/chefos_test"
+_DB = os.environ.get("TEST_DB_NAME", "chefos_test")  # parallel checkouts each use their own
+os.environ["DATABASE_URL"] = f"postgresql+asyncpg://chefos_app:chefos_app@{_HOST}/{_DB}"
 os.environ["MIGRATIONS_DATABASE_URL"] = (
-    f"postgresql+asyncpg://chefos_owner:chefos_owner@{_HOST}/chefos_test"
+    f"postgresql+asyncpg://chefos_owner:chefos_owner@{_HOST}/{_DB}"
 )
 os.environ["ENV"] = "test"
 os.environ["OTEL_ENABLED"] = "false"

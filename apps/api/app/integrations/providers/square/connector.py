@@ -4,6 +4,7 @@ The connector owns `fetch` and webhook handling. Normalization is the pure funct
 `normalizer.py`, called by the shared pipeline.
 """
 
+import json
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -34,6 +35,7 @@ SCOPES = [
 ]
 STREAMS = ("locations", "catalog", "orders", "team_members", "timecards")
 _EPOCH = datetime(2000, 1, 1, tzinfo=UTC)
+_ORDER_LOCATION_BATCH_SIZE = 10
 _WEBHOOK_STREAMS = {
     "order": "orders",
     "catalog": "catalog",
@@ -99,10 +101,35 @@ class SquareConnector:
         if stream == "team_members":
             return self.client.search_team_members(creds, location_ids, cursor)
         if stream == "orders":
-            return self.client.search_orders(
-                creds, location_ids, window.start, window.end, cursor, 500
+            if not location_ids:
+                return Page([], None, None)
+            batches = [
+                location_ids[i : i + _ORDER_LOCATION_BATCH_SIZE]
+                for i in range(0, len(location_ids), _ORDER_LOCATION_BATCH_SIZE)
+            ]
+            cursors = json.loads(cursor) if cursor else [None] * len(batches)
+            if len(cursors) != len(batches):
+                raise ValueError("orders cursor does not match location batches")
+            items = []
+            next_cursors: list[str | None] = []
+            max_updated_at = None
+            for batch, batch_cursor in zip(batches, cursors, strict=True):
+                page = self.client.search_orders(
+                    creds, batch, window.start, window.end, batch_cursor, 500
+                )
+                items.extend(page.items)
+                next_cursors.append(page.next_cursor)
+                if page.max_updated_at is not None and (
+                    max_updated_at is None or page.max_updated_at > max_updated_at
+                ):
+                    max_updated_at = page.max_updated_at
+            next_cursor = (
+                json.dumps(next_cursors, separators=(",", ":")) if any(next_cursors) else None
             )
+            return Page(items, next_cursor, max_updated_at)
         if stream == "timecards":
+            if not location_ids:
+                return Page([], None, None)
             zone = get_zone(tz)
             return self.client.search_timecards(
                 creds,
