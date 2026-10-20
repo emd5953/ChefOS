@@ -20,6 +20,7 @@ _TITLES = {
     "forbidden": "Forbidden",
     "not_found": "Not found",
     "conflict": "Conflict",
+    "rate_limited": "Too many requests",
     "unavailable": "Service unavailable",
     "internal_error": "Internal server error",
 }
@@ -32,6 +33,7 @@ _STATUS_CODES = {
     405: "not_found",
     409: "conflict",
     422: "validation_error",
+    429: "rate_limited",
     503: "unavailable",
 }
 
@@ -45,6 +47,7 @@ class ProblemError(Exception):
         *,
         errors: dict[str, str] | None = None,
         title: str | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         super().__init__(detail or code)
         self.status = status
@@ -52,6 +55,7 @@ class ProblemError(Exception):
         self.detail = detail
         self.errors = errors
         self.title = title or _TITLES.get(code, code)
+        self.headers = headers
 
 
 def validation_error(
@@ -102,7 +106,9 @@ def problem_response(
 def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(ProblemError)
     async def _problem(_: Request, exc: ProblemError) -> JSONResponse:
-        return problem_response(exc.status, exc.code, exc.title, exc.detail, exc.errors)
+        return problem_response(
+            exc.status, exc.code, exc.title, exc.detail, exc.errors, exc.headers
+        )
 
     @app.exception_handler(RequestValidationError)
     async def _validation(_: Request, exc: RequestValidationError) -> JSONResponse:

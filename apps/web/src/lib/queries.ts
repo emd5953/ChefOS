@@ -1,6 +1,6 @@
 "use client";
 
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "./api";
 import type {
   CompareMode,
@@ -11,6 +11,9 @@ import type {
   List,
   Location,
   MappingIssue,
+  SousAnswer,
+  SousAskInput,
+  SousStatus,
   SummaryResponse,
   TodayResponse,
 } from "./types";
@@ -26,6 +29,7 @@ export const keys = {
     ["summary", loc, from, to, compare] as const,
   daily: (loc: string, from: string, to: string) => ["daily", loc, from, to] as const,
   items: (loc: string, from: string, to: string) => ["items", loc, from, to] as const,
+  sousStatus: ["sous-status"] as const,
 };
 
 export function useLocations() {
@@ -123,5 +127,20 @@ export function useItems(locationId: string | undefined, from: string, to: strin
       }),
     enabled: !!locationId,
     placeholderData: keepPreviousData,
+  });
+}
+
+export function useSousStatus() {
+  return useQuery({
+    queryKey: keys.sousStatus,
+    queryFn: () => api<SousStatus>("/v1/sous/status"),
+    retry: false,
+    staleTime: 30_000,
+  });
+}
+
+export function useAskSous() {
+  return useMutation({
+    mutationFn: (input: SousAskInput) => api<SousAnswer>("/v1/sous/ask", { method: "POST", body: input }),
   });
 }

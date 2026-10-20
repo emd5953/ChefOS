@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronsUpDown, LogOut, MapPin, Package, Plug, Store, TrendingUp, UtensilsCrossed, Users, LayoutDashboard } from "lucide-react";
+import { Check, ChevronsUpDown, LogOut, MapPin, Package, Plug, Sparkles, Store, TrendingUp, UtensilsCrossed, Users, LayoutDashboard } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ComponentType } from "react";
@@ -17,6 +17,7 @@ const NAV: NavItem[] = [
   { label: "Overview", path: "/app", icon: LayoutDashboard, exact: true },
   { label: "Sales", path: "/app/sales", icon: TrendingUp },
   { label: "Menu items", path: "/app/items", icon: UtensilsCrossed },
+  { label: "Sous", path: "/app/sous", icon: Sparkles },
   { label: "Integrations", path: "/app/integrations", icon: Plug },
   { label: "Locations", path: "/app/locations", icon: MapPin },
   { label: "Team", path: "/app/team", icon: Users, soon: true },

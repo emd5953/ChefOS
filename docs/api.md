@@ -19,7 +19,7 @@ The browser reaches the API only through the Next.js origin: `http://localhost:3
   "detail": "…", "request_id": "…", "errors": { "email": "Already registered" } }
 ```
 
-  `code` values: `validation_error`, `unauthenticated`, `session_expired`, `csrf_failed`, `forbidden`, `not_found`, `conflict`, `unavailable`, `internal_error`.
+  `code` values: `validation_error`, `unauthenticated`, `session_expired`, `csrf_failed`, `forbidden`, `not_found`, `conflict`, `unavailable`, `internal_error`, `rate_limited`, `sous_unavailable`.
 - Every response carries `X-Request-ID`.
 - Lists are `{ "data": [...] }`.
 
@@ -159,6 +159,42 @@ Days with no data appear with zeros (the series is contiguous).
   by_hour: Array<{ hour: number /* 0-23 local */; net_sales: number; orders: number }>;
   freshness: Freshness[] }
 ```
+
+## Sous
+
+Read-only operations assistant over a location's sales and labor data. The model picks from five typed tools (`get_sales_summary`, `get_daily_sales`, `get_top_items`, `get_today`, `get_data_freshness`) and explains what they return. Numbers in the answer must match tool results; evidence and limitations are computed by the API. Design: [Sous spec](specs/sous.md).
+
+```ts
+type SousKind = "answer" | "clarify" | "refuse" | "unsupported" | "evidence_only"
+type Evidence = { label: string; value: number;
+                  unit: "usd_cents" | "count" | "percent" | "percent_pts" | "hours";
+                  source: string /* tool name */; as_of: string | null }
+type SousAnswer = {
+  kind: SousKind;
+  answer: string;                       // plain text, no markdown
+  period: { from: string; to: string; timezone: string } | null;
+  evidence: Evidence[];
+  limitations: string[];                // stale / failing / not connected streams, failed tools
+  tools_used: Array<{ name: string; args: Record<string, unknown>; ms: number; ok: boolean }>;
+  model: string; prompt_version: string; request_id: string }
+type SousStatus = { provider: "ollama" | "fake"; model: string;
+                    available: boolean /* reachable and model pulled */;
+                    model_pulled: boolean; prompt_version: string }
+```
+
+### `POST /v1/sous/ask`
+
+Body: `{ question: string /* 1-500 chars */; location_id: string; history?: Array<{ role: "user" | "assistant"; content: string }> /* max 10 */ }`. Response `200 SousAnswer`.
+
+- `kind` is `clarify` when the question needs a period or other detail, `refuse` when asked to leave its role, `unsupported` for anything outside the tools (schedules, inventory, waste, payroll), and `evidence_only` when no written answer passed the number check (`answer` is a fixed sentence and `evidence` carries the figures). Only `answer` and `evidence_only` include `period`, `evidence` and `limitations`.
+- Evidence money is integer cents (`usd_cents`); percents are in percent units.
+- A `location_id` outside the user's scope is `404 not_found`, as for Commerce.
+- `429 rate_limited`: 20 questions per minute per user.
+- `503 sous_unavailable`: the language model is unreachable or timed out.
+
+### `GET /v1/sous/status`
+
+`200 SousStatus`. Pings the provider (2 s timeout). The web app uses it to show whether Sous is available.
 
 ## Dev-only (`ENV=local`)
 

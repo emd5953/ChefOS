@@ -19,6 +19,7 @@ export type ApiErrorCode =
   | "forbidden"
   | "not_found"
   | "conflict"
+  | "rate_limited"
   | "unavailable"
   | "internal_error";
 

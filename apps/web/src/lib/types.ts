@@ -170,3 +170,39 @@ export type TodayResponse = {
   by_hour: Array<{ hour: number; net_sales: number; orders: number }>;
   freshness: Freshness[];
 };
+
+export type SousStatus = {
+  provider: "ollama" | "fake";
+  model: string;
+  available: boolean;
+  prompt_version: string;
+};
+
+export type SousKind = "answer" | "clarify" | "refuse" | "unsupported" | "evidence_only";
+export type SousUnit = "usd_cents" | "count" | "percent" | "percent_pts" | "hours";
+
+export type SousEvidence = {
+  label: string;
+  value: number;
+  unit: SousUnit;
+  source: string;
+  as_of: string | null;
+};
+
+export type SousToolCall = { name: string; args: Record<string, unknown>; ms: number; ok: boolean };
+
+export type SousAnswer = {
+  kind: SousKind;
+  answer: string;
+  period: { from: string; to: string; timezone: string } | null;
+  evidence: SousEvidence[];
+  limitations: string[];
+  tools_used: SousToolCall[];
+  model: string;
+  prompt_version: string;
+  request_id: string;
+};
+
+export type SousTurn = { role: "user" | "assistant"; content: string };
+
+export type SousAskInput = { question: string; location_id: string; history?: SousTurn[] };

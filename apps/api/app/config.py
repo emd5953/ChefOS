@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     # Notification URL registered with Square (used in webhook HMAC verification).
     square_webhook_url: str = ""
 
+    # Sous assistant. ollama = local model (nothing leaves the machine); fake = scripted replies.
+    sous_provider: Literal["ollama", "fake"] = "ollama"
+    ollama_url: str = "http://host.docker.internal:11434"
+    sous_model: str = "qwen3:8b"
+    sous_timeout_seconds: int = 90
+
     @field_validator("chefos_master_key")
     @classmethod
     def _check_master_key(cls, value: str) -> str:

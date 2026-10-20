@@ -12,13 +12,14 @@ Modules: **Team**, **Commerce**, **Inventory**. Shared capabilities: **Integrati
 | Platform foundation (Phase 0) | Built: local stack, RLS, auth, Temporal workers, encryption, CI |
 | Square integration (M1–M5) | Built: simulated sandbox by default, real sandbox optional |
 | Commerce (Phase 2) | Built: overview, sales, menu items, freshness |
-| Team, Inventory, Sous | Not started ([roadmap](docs/roadmap.md)) |
+| Sous (read-only) | Built: local model via Ollama, 5 Commerce tools, grounded answers, 40-case eval (`make sous-eval`) |
+| Team, Inventory | Not started ([roadmap](docs/roadmap.md)) |
 | Prototype workspace | Legacy UX reference (`server.py`, `product.js`); removed once fully covered |
 | Marketing site | Served by the web app at `/` |
 
 ## Run the demo
 
-Requires Docker Desktop, [uv](https://docs.astral.sh/uv/), and Node 24. Everything runs locally for free.
+Requires Docker Desktop, [uv](https://docs.astral.sh/uv/), and Node 24. Everything runs locally for free. For Sous, also `brew install ollama && brew services start ollama && ollama pull qwen3:8b`.
 
 ```sh
 make up                      # Postgres, Temporal, RustFS, OTel, Jaeger, API, worker

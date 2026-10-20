@@ -1,18 +1,19 @@
 # Roadmap
 
-**Last updated:** 2026-10-19
+**Last updated:** 2026-10-20
 **Related:** [PRD](prd.md), [ADR 0001: Integration-first](adr/0001-integration-first.md)
 
 The sequence is integration-first. Module features are built on real imported data, not seeded records. Each phase has an exit criterion. Phases overlap where noted.
 
 ## Current state
 
-As of 2026-10-19:
+As of 2026-10-20:
 
 - **Phase 0:** done.
 - **Phase 1:** M1–M5 done in simulated mode. Real-sandbox mode is untested.
 - **Phase 2:** Commerce views done. Prototype deletion pending.
-- **Phases 3–6:** not started.
+- **Phase 5:** Sous read-only built ahead of order over Commerce data (milestones 1–4). The eval set passes 39/40 on qwen3:8b. Team and Inventory tools follow their modules.
+- **Phases 3, 4, 6:** not started.
 - **Prototype workspace** (`server.py` + `product.js`): legacy UX reference, to be deleted once its screens are covered.
 
 ## Phase 0: Platform foundation

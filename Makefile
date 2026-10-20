@@ -1,7 +1,7 @@
 COMPOSE := docker compose --env-file .env -f infra/docker-compose.yml
 API := cd apps/api && uv run
 
-.PHONY: up down reset migrate seed demo test lint fmt web smoke logs env
+.PHONY: up down reset migrate seed demo test lint fmt web smoke logs env sous-eval
 
 env:
 	@test -f .env || { cp .env.example .env; echo "created .env"; }
@@ -55,3 +55,7 @@ smoke: up
 
 logs:
 	$(COMPOSE) logs -f --tail=100
+
+# Sous model eval against the demo org (needs Ollama and a seeded demo). Extra flags: ARGS="--limit 5"
+sous-eval:
+	cd apps/api && OLLAMA_URL=$${OLLAMA_URL:-http://localhost:11434} uv run python -m evals.sous.run $(ARGS)
