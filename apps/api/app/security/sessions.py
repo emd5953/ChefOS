@@ -1,4 +1,5 @@
-"""Sessions, CSRF, and the auth dependencies (`require_auth`, `org_session`, `require_role`).
+"""Sessions, CSRF, and the auth dependencies (`require_auth`, `org_session`, `require_role`,
+`require_staff_role`).
 
 Only this module and app.identity.service may import `unscoped_session`.
 """
@@ -170,9 +171,21 @@ async def require_auth(request: Request) -> AuthContext:
 AuthDep = Annotated[AuthContext, Depends(require_auth)]
 
 
-def require_role(ctx: AuthContext, allowed: set[str]) -> None:
+def require_role(ctx: AuthContext, allowed: set[str] | frozenset[str]) -> None:
     if ctx.role not in allowed:
         raise forbidden()
+
+
+STAFF_ROLES = frozenset({"owner", "admin", "manager"})
+
+
+async def require_staff_role(ctx: AuthDep) -> AuthContext:
+    """Owner, admin, or manager. `employee` sessions get 403 on manager and back-office APIs."""
+    require_role(ctx, STAFF_ROLES)
+    return ctx
+
+
+StaffDep = Annotated[AuthContext, Depends(require_staff_role)]
 
 
 async def org_session(ctx: AuthDep) -> AsyncIterator[AsyncSession]:

@@ -1,7 +1,7 @@
 # API Reference (v1)
 
-**Status:** Contract for the demo build · **Last updated:** 2026-10-19
-**Related:** [Platform foundation](specs/platform-foundation.md), [Integration layer](specs/integration-layer.md)
+**Status:** Contract for the demo build · **Last updated:** 2026-10-20
+**Related:** [Platform foundation](specs/platform-foundation.md), [Integration layer](specs/integration-layer.md), [Team](specs/team.md)
 
 The browser reaches the API only through the Next.js origin: `http://localhost:3000/api/*` is rewritten to `http://localhost:8080/*`. All paths below are relative to the API root (e.g. `/v1/auth/me`; the browser calls `/api/v1/auth/me`).
 
@@ -19,7 +19,7 @@ The browser reaches the API only through the Next.js origin: `http://localhost:3
   "detail": "…", "request_id": "…", "errors": { "email": "Already registered" } }
 ```
 
-  `code` values: `validation_error`, `unauthenticated`, `session_expired`, `csrf_failed`, `forbidden`, `not_found`, `conflict`, `unavailable`, `internal_error`, `rate_limited`, `sous_unavailable`.
+  `code` values: `validation_error`, `unauthenticated`, `session_expired`, `csrf_failed`, `forbidden`, `not_found`, `conflict`, `unavailable`, `internal_error`, `rate_limited`, `sous_unavailable`, `pos_owned_field`.
 - Every response carries `X-Request-ID`.
 - Lists are `{ "data": [...] }`.
 
@@ -160,6 +160,50 @@ Days with no data appear with zeros (the series is contiguous).
   by_hour: Array<{ hour: number /* 0-23 local */; net_sales: number; orders: number }>;
   freshness: Freshness[] }
 ```
+
+## Team
+
+Design: [Team spec](specs/team.md). Every `/v1/team/*` route requires owner, admin, or manager; an `employee` session gets `403 forbidden`. Owners and admins manage every location; a manager manages the locations in their `location_access` and the employees assigned to them. Anything outside that scope, or in another org, is `404`. Every mutation writes an audit event in the same transaction.
+
+```ts
+type Position = { id: string; name: string; color: string /* #rrggbb */; archived_at: string | null }
+type Station  = { id: string; location_id: string; name: string; archived_at: string | null }
+type Employee = { id: string; display_name: string; email: string | null; phone: string | null;
+                  source: "square" | "manual"; active: boolean; job_title: string | null;
+                  pos_hourly_rate: number | null;     // cents, synced from the POS (read-only)
+                  rate_override: number | null;       // cents, team-owned
+                  effective_rate: number | null;      // rate_override ?? pos_hourly_rate; null = "no rate"
+                  currency: "USD";
+                  positions: Array<{ id: string; name: string; color: string; is_primary: boolean }>;
+                  location_ids: string[]; login: "none" | "invited" | "active";
+                  merged_into_id: string | null; updated_at: string }
+type PositionRef = { position_id: string; is_primary?: boolean }   // first one is primary unless one is marked
+```
+
+### Employees
+
+| Method | Path | Body | Response |
+| --- | --- | --- | --- |
+| GET | `/v1/team/employees?location_id&include_inactive` | none | `200 { data: Employee[] }`. Without `location_id`, every employee the caller manages |
+| POST | `/v1/team/employees` | `{ display_name, email?, phone?, location_ids, positions?: PositionRef[], rate_override? }` | `201 Employee` (`source: "manual"`) |
+| PATCH | `/v1/team/employees/{id}` | any of `{ email, phone, rate_override, location_ids, positions }`; manual employees also `{ display_name, active }` | `200 Employee` |
+| POST | `/v1/team/employees/{id}/merge` | `{ into_id }` | `200 Employee` (the survivor). Owner/admin only |
+
+- **Field ownership.** For Square employees, `display_name`, `active`, `job_title`, and `hourly_rate` are synced and read-only: sending any of them is `422 pos_owned_field` with that field in `errors`. Sync never changes team-owned fields.
+- **Locations.** A manager's `location_ids` edit only touches locations they can access; the employee's other locations are kept.
+- **Merge** (`{id}` into `into_id`) repoints external refs, timecards, and later shifts and requests, moves the login, unions positions and locations, then sets `{id}` inactive with `merged_into_id`. If `{id}` came from Square, the survivor becomes POS-linked. `409` if both have logins or either was already merged.
+- **POS import.** After each team member sync, empty emails are filled from Square, assigned linked locations are added (never removed; "all locations" means every linked location), and each job title becomes a position, set as primary on employees that have no positions.
+
+### Positions and stations
+
+| Method | Path | Body | Response |
+| --- | --- | --- | --- |
+| GET | `/v1/team/positions?include_archived` | none | `200 { data: Position[] }` |
+| POST | `/v1/team/positions` | `{ name, color? }` | `201 Position`. `409` if the name exists (ignoring case) |
+| PATCH | `/v1/team/positions/{id}` | `{ name?, color?, archived? }` | `200 Position` |
+| GET | `/v1/team/stations?location_id&include_archived` | none | `200 { data: Station[] }` |
+| POST | `/v1/team/stations` | `{ location_id, name }` | `201 Station` |
+| PATCH | `/v1/team/stations/{id}` | `{ name?, archived? }` | `200 Station` |
 
 ## Sous
 

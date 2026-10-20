@@ -1,6 +1,6 @@
 # Team (Phase 3)
 
-**Status:** Proposed · **Last updated:** 2026-10-20
+**Status:** In progress (T1 built) · **Last updated:** 2026-10-20
 **Related:** [PRD](../prd.md) (TEAM-1 to TEAM-4, MOB-1), [Roadmap](../roadmap.md), [Architecture](../architecture.md), [Integration layer](integration-layer.md), [ADR 0002](../adr/0002-production-stack.md)
 
 ## Problem
@@ -48,8 +48,9 @@ staff_members  + email citext null, phone null, user_id uuid null → users,
                  rate_override bigint null, source text ('square'|'manual'),
                  merged_into_id uuid null, updated_at
                  unique(org_id, user_id)
-positions(id, org_id, name, color, created_at)                 unique(org_id, lower(name))
+positions(id, org_id, name, color, created_at, archived_at)    unique(org_id, lower(name))
 employee_positions(org_id, employee_id, position_id, is_primary) pk(employee_id, position_id)
+                                                                unique(employee_id) where is_primary
 stations(id, org_id, location_id, name, archived_at)            -- optional label on a shift
 employee_locations(org_id, employee_id, location_id)            pk(employee_id, location_id)
 
@@ -81,8 +82,8 @@ Invitation acceptance happens before any org scope exists. Like `integration_con
 
 ### Employee linking
 
-- **POS → employee.** Unchanged path: `process_team_members` creates or updates a `staff_members` row and its `external_refs` entry. Two additions: the Square normalizer also returns `email_address` and `assigned_locations`, and the pipeline then calls `team.service.on_staff_imported(db, org_id, ids)`. That hook (a) sets `email` if empty, (b) inserts `employee_locations` for assigned locations that are linked on the connection (insert-only, never removes), and (c) creates a `positions` row per distinct job title and assigns it as primary if the employee has none. Unlinked timecard-only members still go through the existing `unmapped_team_member` mapping queue.
-- **Manual employees** (`source = 'manual'`) cover staff who aren't in the POS. If the same person later appears from Square, the duplicate is resolved with **merge** (`from → into`): repoints `external_refs`, `timecards`, `shifts`, requests, and `user_id` to `into`, then sets `from.active = false, merged_into_id = into`. One transaction, one audit event. Merge is refused if both records have a `user_id`.
+- **POS → employee.** Unchanged path: `process_team_members` creates or updates a `staff_members` row and its `external_refs` entry. Two additions: the Square normalizer also returns `email_address` and `assigned_locations`, and the pipeline then calls `team.service.on_staff_imported(db, org_id, ids)`. That hook (a) sets `email` if empty, (b) inserts `employee_locations` for assigned locations that are linked on the connection (insert-only, never removes), and (c) creates a `positions` row per distinct job title and assigns it as primary if the employee has no positions at all (so an employee whose positions a manager cleared gets the POS title back on the next sync; one with any position is left alone). The pipeline's upsert writes only name, job title, POS rate, and active, and only when they changed. An active-to-inactive transition writes one `employee.deactivated_by_pos` event (the only per-row sync event). Unlinked timecard-only members still go through the existing `unmapped_team_member` mapping queue.
+- **Manual employees** (`source = 'manual'`) cover staff who aren't in the POS. If the same person later appears from Square, the duplicate is resolved with **merge** (`from → into`): repoints `external_refs`, `timecards`, `shifts`, requests, and `user_id` to `into`, unions positions and locations, fills `into`'s empty email/phone/rate override from `from`, then sets `from.active = false, merged_into_id = into`. If `from` is POS-linked, `into` becomes `source = 'square'` and takes `from`'s POS-owned fields, since sync now writes to it. One transaction, one audit event. Merge is refused if both records have a `user_id` or either was already merged.
 - **Employee → user.** `staff_members.user_id` is 0..1 per org (architecture: `Employee 0..1─1 User`). It's set only by accepting an invitation created from that employee record, which pre-fills the email from Square. Accepting creates the `users` row (or 409 if the email already has an account, see Risks), a `memberships` row with the invited role, `location_access` rows, and links the employee. Tokens are 256-bit, stored as SHA-256, valid 7 days, single use.
 - **Effective rate** for projections = `rate_override` ?? POS `hourly_rate` ?? null. Null is shown as "no rate" and excluded from cost (flagged, not guessed).
 
@@ -96,11 +97,11 @@ Why this method: restaurant demand is dominated by day-of-week (the simulated se
 
 ### Service and HTTP API
 
-Module `app/team/` (`models.py`, `schemas.py`, `service.py`, `forecast.py`, `notify.py`, `api.py`). Location scope uses `ctx.allowed_location_ids()` as Commerce does. **Manage** = owner, admin, or manager with access to the location. Managers may invite only the `employee` role and can't merge employees. A new `require_staff_role` dependency (owner/admin/manager) is added to Commerce, Sous, Integrations, and location-write routes so `employee` sessions get 403.
+Module `app/team/` (`models.py`, `schemas.py`, `service.py`, `forecast.py`, `notify.py`, `api.py`). Location scope uses `ctx.allowed_location_ids()` as Commerce does. **Manage** = owner, admin, or manager with access to the location. A manager sees employees assigned to at least one of their locations; editing an employee's locations only adds or removes locations the manager can access. Managers may invite only the `employee` role and can't merge employees. Positions are org-wide and can be archived (hidden from pickers, kept on existing records); stations belong to a location. A new `require_staff_role` dependency (owner/admin/manager) is added to Commerce, Sous, Integrations, and location-write routes so `employee` sessions get 403.
 
 ```
 GET    /v1/team/employees?location_id&include_inactive        → { data: Employee[] }        manage
-POST   /v1/team/employees      ← { display_name, email?, phone?, location_ids, positions[], rate_override? }
+POST   /v1/team/employees      ← { display_name, email?, phone?, location_ids, positions: [{ position_id, is_primary? }], rate_override? }
 PATCH  /v1/team/employees/{id} ← team-owned fields only; POS-owned field → 422 pos_owned_field
 POST   /v1/team/employees/{id}/merge ← { into_id }                                       owner/admin
 GET|POST|PATCH /v1/team/positions[/{id}]      GET|POST|PATCH /v1/team/stations[/{id}]?location_id

@@ -1,7 +1,8 @@
 """Canonical commerce entities and read models.
 
 Written by the integration layer (app.integrations.pipeline), read by the Commerce API.
-Money is bigint minor units. Every table carries `org_id` and sits under RLS.
+Money is bigint minor units. Every table carries `org_id` and sits under RLS. Staff and
+timecards live in app.team.models.
 """
 
 import uuid
@@ -57,23 +58,6 @@ class MenuItemVariant(Base):
     price: Mapped[int | None] = mapped_column(BigInteger, default=None)
     currency: Mapped[str] = mapped_column(String, default="USD", server_default="USD")
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
-
-
-class StaffMember(Base):
-    """Canonical staff. Square team members link to it through external_refs."""
-
-    __tablename__ = "staff_members"
-    __table_args__ = (Index("ix_staff_members_org_id", "org_id"),)
-
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=new_id)
-    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
-    display_name: Mapped[str] = mapped_column(String)
-    job_title: Mapped[str | None] = mapped_column(String, default=None)
-    hourly_rate: Mapped[int | None] = mapped_column(BigInteger, default=None)
-    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_now, server_default=_NOW
-    )
 
 
 class SalesOrder(Base):
@@ -162,36 +146,6 @@ class SalesOrderReturn(Base):
     amount: Mapped[int] = mapped_column(BigInteger)  # net sales reduction, cents
     tax: Mapped[int] = mapped_column(BigInteger)
     reason: Mapped[str | None] = mapped_column(String, default=None)
-
-
-class Timecard(Base):
-    __tablename__ = "timecards"
-    __table_args__ = (
-        UniqueConstraint("connection_id", "external_id", name="uq_timecards_conn_external"),
-        Index("ix_timecards_org_location_date", "org_id", "location_id", "business_date"),
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=new_id)
-    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
-    connection_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("integration_connections.id"))
-    external_id: Mapped[str] = mapped_column(String)
-    location_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("locations.id"))
-    # Null when the team member is not linked (counted in location labor, not per-employee views).
-    staff_member_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("staff_members.id"), default=None
-    )
-    external_staff_ref: Mapped[str] = mapped_column(String)
-    business_date: Mapped[date] = mapped_column(Date)
-    clock_in: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    clock_out: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
-    break_minutes: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    hourly_rate: Mapped[int] = mapped_column(BigInteger)
-    paid_hours: Mapped[Decimal] = mapped_column(Numeric(10, 4))
-    cost: Mapped[int] = mapped_column(BigInteger)
-    currency: Mapped[str] = mapped_column(String, default="USD", server_default="USD")
-    source: Mapped[str] = mapped_column(String)
-    source_version: Mapped[int] = mapped_column(BigInteger)
-    source_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class DailySales(Base):

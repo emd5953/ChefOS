@@ -219,6 +219,9 @@ class CanonicalStaff:
     job_title: str | None
     hourly_rate_cents: int | None
     source_updated_at: datetime | None
+    email: str | None = None
+    # Square location ids the member is assigned to; None means all locations.
+    assigned_location_ids: tuple[str, ...] | None = ()
 
 
 @dataclass(frozen=True, slots=True)

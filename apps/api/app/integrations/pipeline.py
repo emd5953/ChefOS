@@ -24,8 +24,6 @@ from app.commerce.models import (
     SalesOrder,
     SalesOrderLine,
     SalesOrderReturn,
-    StaffMember,
-    Timecard,
 )
 from app.ids import new_id
 from app.integrations.identity import IssueCollector, add_refs, resolve_refs
@@ -47,6 +45,8 @@ from app.integrations.providers.square.types import (
     RawItem,
 )
 from app.integrations.readmodels import Pair, rebuild_daily_labor, rebuild_daily_sales
+from app.team import service as team
+from app.team.models import StaffMember, Timecard
 
 BATCH = 500
 SOURCE = "square"
@@ -646,36 +646,67 @@ async def process_catalog(
 async def process_team_members(
     db: AsyncSession, ctx: ConnCtx, entries: Sequence[Landed], now: datetime
 ) -> BatchResult:
+    """Upsert POS-owned employee fields, then hand the rest to Team (`on_staff_imported`).
+
+    Only name, job title, POS rate, and active are written here; team-owned fields (positions,
+    locations, rate override, phone, login) are never overwritten by sync.
+    """
     res = BatchResult(fetched=len(entries), landed=len(entries))
     if not entries:
         return res
     refs = await resolve_refs(
         db, ctx.connection_id, "staff_member", [e.item.external_id for e in entries]
     )
+    was_active = {
+        r.id: r.active
+        for r in await db.execute(
+            text("SELECT id, active FROM staff_members WHERE id = ANY(:ids)"),
+            {"ids": list(refs.values())},
+        )
+    }
     new_refs: dict[str, uuid.UUID] = {}
-    rows: list[dict[str, Any]] = []
+    rows: dict[uuid.UUID, dict[str, Any]] = {}
+    linked = [link.location_id for link in ctx.links.values() if link.location_id is not None]
+    imported: dict[uuid.UUID, team.ImportedStaff] = {}
     for e in entries:
         s = normalize_team_member(e.item.payload)
         sid = refs.get(s.external_id) or new_refs.setdefault(s.external_id, new_id())
         name = " ".join(p for p in (s.given_name, s.family_name) if p) or s.external_id
-        rows.append(
-            {
-                "id": sid,
-                "org_id": ctx.org_id,
-                "display_name": name,
-                "job_title": s.job_title,
-                "hourly_rate": s.hourly_rate_cents,
-                "active": s.status == "active",
-            }
+        active = s.status == "active"
+        rows[sid] = {
+            "id": sid,
+            "org_id": ctx.org_id,
+            "display_name": name,
+            "job_title": s.job_title,
+            "hourly_rate": s.hourly_rate_cents,
+            "active": active,
+            "source": SOURCE,
+        }
+        if s.assigned_location_ids is None:  # all locations
+            locations = tuple(linked)
+        else:
+            locations = tuple(
+                link.location_id
+                for ext in s.assigned_location_ids
+                if (link := ctx.links.get(ext)) is not None and link.location_id is not None
+            )
+        imported[sid] = team.ImportedStaff(
+            employee_id=sid,
+            email=s.email,
+            job_title=s.job_title,
+            location_ids=locations,
+            deactivated=was_active.get(sid, False) and not active,
         )
-    stmt = pg_insert(StaffMember).values(rows)
+    stmt = pg_insert(StaffMember).values(list(rows.values()))
+    cols = ("display_name", "job_title", "hourly_rate", "active")
+    ex = stmt.excluded
     await db.execute(
         stmt.on_conflict_do_update(
             index_elements=["id"],
-            set_={
-                c: getattr(stmt.excluded, c)
-                for c in ("display_name", "job_title", "hourly_rate", "active")
-            },
+            set_={**{c: getattr(ex, c) for c in cols}, "updated_at": now},
+            where=tuple_(*(getattr(StaffMember, c) for c in cols)).is_distinct_from(
+                tuple_(*(getattr(ex, c) for c in cols))
+            ),
         )
     )
     await add_refs(db, ctx.org_id, ctx.connection_id, "staff_member", new_refs)
@@ -689,6 +720,7 @@ async def process_team_members(
             ),
             {"conn": ctx.connection_id, "ids": list(new_refs)},
         )
+    await team.on_staff_imported(db, ctx.org_id, list(imported.values()))
     await mark_raw(db, ctx, "team_members", entries, "ok")
     res.applied = len(rows)
     return res

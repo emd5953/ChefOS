@@ -20,7 +20,7 @@ const NAV: NavItem[] = [
   { label: "Sous", path: "/app/sous", icon: Sparkles },
   { label: "Integrations", path: "/app/integrations", icon: Plug },
   { label: "Locations", path: "/app/locations", icon: MapPin },
-  { label: "Team", path: "/app/team", icon: Users, soon: true },
+  { label: "Team", path: "/app/team", icon: Users },
   { label: "Inventory", path: "/app/inventory", icon: Package, soon: true },
 ];
 

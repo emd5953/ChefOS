@@ -218,3 +218,42 @@ export type SousErrorEvent = { status: number; code: string; detail: string };
 export type SousTurn = { role: "user" | "assistant"; content: string };
 
 export type SousAskInput = { question: string; location_id: string; history?: SousTurn[] };
+
+// ---- Team ----
+export type Position = { id: string; name: string; color: string; archived_at: string | null };
+export type Station = { id: string; location_id: string; name: string; archived_at: string | null };
+export type EmployeePosition = { id: string; name: string; color: string; is_primary: boolean };
+export type LoginStatus = "none" | "invited" | "active";
+export type Employee = {
+  id: string;
+  display_name: string;
+  email: string | null;
+  phone: string | null;
+  source: "square" | "manual";
+  active: boolean;
+  job_title: string | null;
+  /** Synced from the POS (read-only for Square employees). */
+  pos_hourly_rate: number | null;
+  rate_override: number | null;
+  /** rate_override ?? pos_hourly_rate; null = "no rate". */
+  effective_rate: number | null;
+  currency: "USD";
+  positions: EmployeePosition[];
+  location_ids: string[];
+  login: LoginStatus;
+  merged_into_id: string | null;
+  updated_at: string;
+};
+export type PositionRef = { position_id: string; is_primary?: boolean };
+export type EmployeeCreate = {
+  display_name: string;
+  email?: string | null;
+  phone?: string | null;
+  location_ids: string[];
+  positions?: PositionRef[];
+  rate_override?: number | null;
+};
+export type EmployeePatch = Partial<Omit<EmployeeCreate, "positions">> & {
+  positions?: PositionRef[];
+  active?: boolean;
+};

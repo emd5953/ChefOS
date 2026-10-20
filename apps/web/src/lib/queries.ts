@@ -7,12 +7,15 @@ import type {
   Connection,
   ConnectionDetail,
   DailyResponse,
+  Employee,
   ItemsResponse,
   List,
   Location,
   MappingCandidate,
   MappingIssue,
+  Position,
   SousStatus,
+  Station,
   SummaryResponse,
   TodayResponse,
 } from "./types";
@@ -31,6 +34,10 @@ export const keys = {
   daily: (loc: string, from: string, to: string) => ["daily", loc, from, to] as const,
   items: (loc: string, from: string, to: string) => ["items", loc, from, to] as const,
   sousStatus: ["sous-status"] as const,
+  employees: (loc: string, inactive: boolean) => ["team", "employees", loc, inactive] as const,
+  positions: (archived: boolean) => ["team", "positions", archived] as const,
+  stations: (loc: string) => ["team", "stations", loc] as const,
+  team: ["team"] as const,
 };
 
 export function useLocations() {
@@ -157,5 +164,38 @@ export function useSousStatus() {
     queryFn: () => api<SousStatus>("/v1/sous/status"),
     retry: false,
     staleTime: 30_000,
+  });
+}
+
+// ---- Team ----
+
+export function useEmployees(locationId: string | undefined, includeInactive = false) {
+  return useQuery({
+    queryKey: keys.employees(locationId ?? "", includeInactive),
+    queryFn: async () =>
+      (
+        await api<List<Employee>>("/v1/team/employees", {
+          query: { location_id: locationId, include_inactive: includeInactive || undefined },
+        })
+      ).data,
+    enabled: !!locationId,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function usePositions(includeArchived = false) {
+  return useQuery({
+    queryKey: keys.positions(includeArchived),
+    queryFn: async () =>
+      (await api<List<Position>>("/v1/team/positions", { query: { include_archived: includeArchived || undefined } }))
+        .data,
+  });
+}
+
+export function useStations(locationId: string | undefined) {
+  return useQuery({
+    queryKey: keys.stations(locationId ?? ""),
+    queryFn: async () => (await api<List<Station>>("/v1/team/stations", { query: { location_id: locationId } })).data,
+    enabled: !!locationId,
   });
 }
