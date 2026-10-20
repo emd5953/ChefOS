@@ -1,6 +1,6 @@
 # Team (Phase 3)
 
-**Status:** In progress (T1–T2 built) · **Last updated:** 2026-10-20
+**Status:** In progress (T1–T3 built) · **Last updated:** 2026-10-20
 **Related:** [PRD](../prd.md) (TEAM-1 to TEAM-4, MOB-1), [Roadmap](../roadmap.md), [Architecture](../architecture.md), [Integration layer](integration-layer.md), [ADR 0002](../adr/0002-production-stack.md)
 
 ## Problem
@@ -89,11 +89,11 @@ Invitation acceptance happens before any org scope exists. Like `integration_con
 
 ### Forecast and projected labor
 
-**Forecast sales** for business date D at a location = the **median of net sales on the last 4 complete same-weekday business dates** before today (from `daily_sales`, summed across channels). With fewer than 2 such dates, the forecast is null with reason `not_enough_history`.
+**Forecast sales** for business date D at a location = the **median of net sales on the last 4 complete same-weekday business dates** before min(D, today) (from `daily_sales`, summed across channels), so a past day in the current week is forecast from the weeks before it rather than from its own actuals. Dates on or after the location's first sales day without a `daily_sales` row are closed days and count as 0; dates before it are not history. With fewer than 2 dates with history, the forecast is null with reason `not_enough_history`; with no POS connection, `not_connected`. An even count averages the middle pair (rounded half up to the cent).
 
 Why this method: restaurant demand is dominated by day-of-week (the simulated seller's demand table is literally per weekday), so same-weekday history captures the main signal. Four weeks tracks seasonal drift without needing the 13-month backfill. Median instead of mean keeps one-offs from distorting a day: a $4,800 buyout or a snowstorm Saturday in the window moves the forecast by at most the gap between the two middle values. It is deterministic, computed on read from 28 days of an indexed read model, needs no new dependency, and fits in one sentence in the UI ("Median of the last 4 Fridays"). Rejected: year-over-year with growth adjustment (calendar alignment, holidays, needs full backfill); exponential smoothing or Prophet-style models (opaque, a new dependency, and no better on 4–8 weeks of history). The forecast carries the `orders` stream's `DataFreshness`.
 
-**Projection** per shift: `paid_hours = (ends_at − starts_at) − break_minutes` (timestamp difference, so DST days are correct); `cost = paid_hours × effective_rate`. Per day: scheduled hours, projected cost, forecast, projected labor % = cost / forecast (null if the forecast is null or 0). Per week: the same totals. The builder also shows last 4 weeks' actual labor % from the existing Commerce summary as a reference.
+**Projection** per shift: `paid_hours = (ends_at − starts_at) − break_minutes` (timestamp difference, so DST days are correct); `cost = paid_hours × effective_rate`. Per day: scheduled hours, projected cost, forecast, projected labor % = cost / forecast (null if the forecast is null or 0). Unassigned shifts count as unrated (hours in, cost out). Per week: the same totals; the week forecast is null unless every day has one, so a partial sum never understates labor %. The builder also shows the last 28 days' actual labor % from the existing Commerce summary as a reference. Hours are computed in UTC: Python subtracts two datetimes that share a tzinfo by wall clock, which is wrong across DST.
 
 ### Service and HTTP API
 
@@ -112,10 +112,11 @@ GET    /v1/invitations/{token}                → { org_name, email, role, emplo
 POST   /v1/invitations/{token}/accept ← { display_name, password } → 201 + session cookie (no auth, throttled)
 
 GET    /v1/team/schedule?location_id&week_start
-       → { schedule: { version, published_version, has_unpublished_changes }, shifts: Shift[],
+       → { schedule: { version, published_version, has_unpublished_changes, unpublished_changes },
+           shifts: Shift[], employees: [{ id, display_name, active, primary_position_id, has_rate, assigned }],
            days: [{ business_date, scheduled_hours, projected_cost, unrated_shifts,
-                    forecast_sales, forecast_basis: date[], projected_labor_pct }],
-           week: {...same totals}, conflicts: Conflict[], freshness: DataFreshness }
+                    forecast_sales, forecast_basis: date[], forecast_reason, projected_labor_pct }],
+           week: {...same totals, reference_labor_pct}, conflicts: Conflict[], freshness: Freshness[] }
 POST   /v1/team/schedule/shifts?location_id&week_start  ← ShiftIn → 201 Shift
 PATCH  /v1/team/shifts/{id}    ← partial ShiftIn + expected_updated_at        DELETE /v1/team/shifts/{id}
 POST   /v1/team/schedule/copy?location_id&week_start ← { from_week_start }   (target week must be empty)
@@ -135,7 +136,7 @@ GET    /v1/notifications?unread_only    POST /v1/notifications/read ← { ids? ,
 
 `ShiftIn = { employee_id?, position_id, station_id?, starts_at, ends_at, break_minutes, notes? }`, times in ISO with offset. The API derives `business_date` from the location's timezone and `business_day_start`. `/v1/me/*` resolves the employee from `ctx.user_id`. It never takes an employee ID. Rates and costs never appear in `/v1/me/*` responses.
 
-**Conflicts** (computed on read, listed per shift): `overlap` (same employee, any location; also rejected 409 on write), `time_off_approved`, `time_off_pending`, `unavailable`, `inactive_employee`, `not_assigned_to_location`, `unassigned`. Only `overlap` blocks a write. Publish with any other conflict requires `acknowledge_conflicts: true`.
+**Conflicts** (computed on read, listed per shift): `overlap` (same employee, any location; also rejected 409 on write), `time_off_approved`, `time_off_pending`, `unavailable`, `inactive_employee`, `not_assigned_to_location`, `unassigned`. Only `overlap` blocks a write: each write for an employee locks that employee's row, so concurrent writes can't both pass the check. Publish with any other conflict requires `acknowledge_conflicts: true`. The schedule response also lists the roster (`employees`: everyone assigned to the location plus anyone with a shift there) so the grid can render rows without a second call, and `unpublished_changes` (shifts added, removed, or changed versus `published_shifts`) for the publish bar. `has_unpublished_changes` is derived from that diff, not from `version`, so reverting an edit clears it. Copy shifts by whole weeks in local wall time; inactive employees and employees with a clashing shift elsewhere are copied as unassigned.
 
 **Publish** in one transaction: lock the schedule row, check `expected_version`, replace `published_shifts`, diff old vs new per employee (added, removed, time/position/station changed), write one `notifications` row per affected user with a summary ("Your week of Oct 26 changed: Fri 4–11pm added, Sat moved to 5pm"), bump `published_version`, audit. Shifts that ended before now are ignored for alerts. Every shift write bumps `schedules.version`, which drives `has_unpublished_changes`.
 

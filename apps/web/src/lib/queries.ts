@@ -15,6 +15,7 @@ import type {
   MappingCandidate,
   MappingIssue,
   Position,
+  ScheduleResponse,
   SousStatus,
   Station,
   SummaryResponse,
@@ -39,6 +40,7 @@ export const keys = {
   positions: (archived: boolean) => ["team", "positions", archived] as const,
   stations: (loc: string) => ["team", "stations", loc] as const,
   invitations: ["team", "invitations"] as const,
+  schedule: (loc: string, week: string) => ["team", "schedule", loc, week] as const,
   team: ["team"] as const,
 };
 
@@ -207,5 +209,15 @@ export function useInvitations() {
     queryKey: keys.invitations,
     queryFn: async () =>
       (await api<List<Invitation>>("/v1/team/invitations", { query: { status: "pending" } })).data,
+  });
+}
+
+export function useSchedule(locationId: string | undefined, weekStart: string) {
+  return useQuery({
+    queryKey: keys.schedule(locationId ?? "", weekStart),
+    queryFn: () =>
+      api<ScheduleResponse>("/v1/team/schedule", { query: { location_id: locationId, week_start: weekStart } }),
+    enabled: !!locationId,
+    placeholderData: keepPreviousData,
   });
 }

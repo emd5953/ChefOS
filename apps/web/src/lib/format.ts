@@ -103,3 +103,18 @@ export function formatHour(h: number): string {
   const hr = h % 12 === 0 ? 12 : h % 12;
   return `${hr}${suffix}`;
 }
+
+/** Compact shift time in a zone: "4p", "4:30p". */
+export function formatShiftTime(iso: string, timeZone: string): string {
+  const d = new Date(iso);
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit", hourCycle: "h12" })
+    .formatToParts(d);
+  const hour = parts.find((p) => p.type === "hour")?.value ?? "";
+  const minute = parts.find((p) => p.type === "minute")?.value ?? "00";
+  const period = (parts.find((p) => p.type === "dayPeriod")?.value ?? "").toLowerCase().startsWith("p") ? "p" : "a";
+  return `${hour}${minute === "00" ? "" : `:${minute}`}${period}`;
+}
+
+export function formatShiftRange(startIso: string, endIso: string, timeZone: string): string {
+  return `${formatShiftTime(startIso, timeZone)}–${formatShiftTime(endIso, timeZone)}`;
+}

@@ -1,9 +1,16 @@
 import re
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    AfterValidator,
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+)
 
 from app.identity.schemas import Email, Name
 
@@ -226,3 +233,131 @@ class InvitationPreview(BaseModel):
 class InvitationAccept(BaseModel):
     display_name: PersonName
     password: Annotated[str, Field(max_length=256)]
+
+
+# ---------------------------------------------------------------- schedule
+
+ConflictKind = Literal[
+    "overlap",
+    "time_off_approved",
+    "time_off_pending",
+    "unavailable",
+    "inactive_employee",
+    "not_assigned_to_location",
+    "unassigned",
+]
+Notes = Annotated[str, Field(max_length=500)]
+BreakMinutes = Annotated[int, Field(ge=0, le=600)]
+
+
+class ShiftIn(BaseModel):
+    """Times are ISO 8601 with an offset; the API derives the business date."""
+
+    employee_id: uuid.UUID | None = None
+    position_id: uuid.UUID
+    station_id: uuid.UUID | None = None
+    starts_at: AwareDatetime
+    ends_at: AwareDatetime
+    break_minutes: BreakMinutes = 0
+    notes: Notes = ""
+
+
+class ShiftPatch(BaseModel):
+    employee_id: uuid.UUID | None = None
+    position_id: uuid.UUID | None = None
+    station_id: uuid.UUID | None = None
+    starts_at: AwareDatetime | None = None
+    ends_at: AwareDatetime | None = None
+    break_minutes: BreakMinutes | None = None
+    notes: Notes | None = None
+    expected_updated_at: AwareDatetime
+
+
+class ShiftOut(BaseModel):
+    id: uuid.UUID
+    location_id: uuid.UUID
+    employee_id: uuid.UUID | None
+    position_id: uuid.UUID
+    station_id: uuid.UUID | None
+    business_date: date
+    starts_at: datetime
+    ends_at: datetime
+    break_minutes: int
+    notes: str
+    paid_hours: float
+    cost: int | None  # cents; null when the employee has no rate (or the shift is unassigned)
+    updated_at: datetime
+
+
+class ConflictOut(BaseModel):
+    shift_id: uuid.UUID
+    kind: ConflictKind
+    detail: str
+
+
+class ScheduleMeta(BaseModel):
+    id: uuid.UUID | None
+    week_start: date
+    version: int
+    published_version: int | None
+    published_at: datetime | None
+    has_unpublished_changes: bool
+    unpublished_changes: int  # shifts added, removed, or changed since the last publish
+
+
+class ScheduleEmployee(BaseModel):
+    id: uuid.UUID
+    display_name: str
+    active: bool
+    primary_position_id: uuid.UUID | None
+    position_ids: list[uuid.UUID]
+    has_rate: bool
+    assigned: bool  # works at this location
+
+
+class Totals(BaseModel):
+    scheduled_hours: float
+    projected_cost: int
+    unrated_shifts: int
+    forecast_sales: int | None
+    projected_labor_pct: float | None
+
+
+class ScheduleDay(Totals):
+    business_date: date
+    forecast_basis: list[date]
+    forecast_reason: Literal["not_connected", "not_enough_history"] | None
+
+
+class ScheduleWeek(Totals):
+    reference_labor_pct: float | None  # actual labor % over the last 4 complete weeks
+    reference_period: dict[str, date]
+
+
+class FreshnessOut(BaseModel):
+    stream: Literal["orders", "timecards", "catalog", "team_members"]
+    location_id: uuid.UUID
+    data_as_of: datetime | None
+    status: Literal["fresh", "stale", "failing", "not_connected"]
+
+
+class ScheduleOut(BaseModel):
+    location_id: uuid.UUID
+    timezone: str
+    currency: Literal["USD"] = "USD"
+    schedule: ScheduleMeta
+    shifts: list[ShiftOut]
+    employees: list[ScheduleEmployee]
+    days: list[ScheduleDay]
+    week: ScheduleWeek
+    conflicts: list[ConflictOut]
+    freshness: list[FreshnessOut]
+
+
+class CopyRequest(BaseModel):
+    from_week_start: date
+
+
+class CopyOut(BaseModel):
+    copied: int
+    unassigned: int  # copied without an employee (inactive, or overlapping elsewhere)

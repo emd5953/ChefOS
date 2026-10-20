@@ -1,17 +1,18 @@
 """A second org must not see, change, or write the first org's Team data."""
 
 import uuid
+from datetime import date
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from app.db import get_engine, lookup_invitation, scoped_session
-from tests.team.conftest import Clock, Connect, Connected, import_team
+from tests.team.conftest import Clock, Connect, Connected, at, import_team
 
 TABLES = [
     "staff_members", "positions", "employee_positions", "stations", "employee_locations",
-    "invitations",
+    "invitations", "schedules", "shifts",
 ]  # fmt: skip
 
 
@@ -33,6 +34,15 @@ async def two(connect: Connect, clock: Clock) -> tuple[Connected, Connected]:
                 "email": "x@example.com",
                 "location_ids": [str(c.location_id)],
             },
+            headers=c.headers,
+        )
+        assert r.status_code == 201, r.text
+        pos = (await c.client.get("/v1/team/positions")).json()["data"][0]["id"]
+        monday = date(2026, 3, 9)
+        r = await c.client.post(
+            "/v1/team/schedule/shifts",
+            params={"location_id": str(c.location_id), "week_start": monday.isoformat()},
+            json={"position_id": pos, "starts_at": at(monday, 9), "ends_at": at(monday, 15)},
             headers=c.headers,
         )
         assert r.status_code == 201, r.text

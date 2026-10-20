@@ -6,9 +6,12 @@ team members are imported, and helpers that add manager/employee logins."""
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
+import pytest
 import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -128,3 +131,25 @@ async def audit_actions(conn: Connected) -> list[tuple[str, str]]:
 
 def by_name(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {r["display_name"]: r for r in rows}
+
+
+NY = ZoneInfo("America/New_York")
+
+
+def at(d: date, h: int, m: int = 0) -> str:
+    """ISO timestamp for a New York wall-clock time (the fake seller's zone)."""
+    return datetime(d.year, d.month, d.day, h, m, tzinfo=NY).isoformat()
+
+
+@pytest.fixture
+def frozen(clock: Clock, monkeypatch: pytest.MonkeyPatch) -> Clock:
+    """Schedule reads use the test clock as "now" (forecast and reference windows)."""
+    from app.team import schedule
+
+    monkeypatch.setattr(schedule, "_now", clock)
+    return clock
+
+
+async def positions(conn: Connected) -> dict[str, str]:
+    rows = (await conn.client.get("/v1/team/positions")).json()["data"]
+    return {p["name"]: p["id"] for p in rows}

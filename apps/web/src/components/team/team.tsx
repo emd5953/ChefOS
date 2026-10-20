@@ -1,13 +1,13 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, UserPlus, Users } from "lucide-react";
+import { CalendarDays, Plus, UserPlus, Users } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { PageHeader } from "@/components/page-header";
 import { PosGate } from "@/components/pos-gate";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, LinkButton } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
 import { Field, Input } from "@/components/ui/field";
@@ -23,7 +23,7 @@ import type { Employee, EmployeeCreate, Location, PositionRef } from "@/lib/type
 import { LocationsPicker, PositionsPicker, RateField } from "./employee-form";
 import { EmployeeSheet } from "./employee-sheet";
 import { InviteManagerDialog, InvitePanel } from "./invite-panel";
-import { Positions } from "./positions";
+import { Positions, Stations } from "./positions";
 import { Checkbox, LoginBadge, PositionChip, Tabs, parseDollars } from "./shared";
 
 type Tab = "employees" | "positions";
@@ -33,6 +33,7 @@ export function Team() {
   const pathname = usePathname();
   const search = useSearchParams();
   const { role } = useSession();
+  const { href } = useLocationScope();
   const [invitingManager, setInvitingManager] = useState(false);
   const tab: Tab = search.get("tab") === "positions" ? "positions" : "employees";
   const setTab = (t: Tab) => {
@@ -49,11 +50,16 @@ export function Team() {
         title="Team"
         description="Everyone on the schedule: who they are, what they do, where they work, and whether they can log in."
         actions={
-          canManage(role) ? (
-            <Button variant="outline" onClick={() => setInvitingManager(true)}>
-              <UserPlus aria-hidden /> Invite manager
-            </Button>
-          ) : undefined
+          <>
+            {canManage(role) && (
+              <Button variant="outline" onClick={() => setInvitingManager(true)}>
+                <UserPlus aria-hidden /> Invite manager
+              </Button>
+            )}
+            <LinkButton href={href("/app/team/schedule")}>
+              <CalendarDays aria-hidden /> Schedule
+            </LinkButton>
+          </>
         }
       />
       <div className="mb-5">
@@ -68,7 +74,12 @@ export function Team() {
         />
       </div>
       <InviteManagerDialog open={invitingManager} onClose={() => setInvitingManager(false)} />
-      {tab === "positions" ? <Positions /> : <PosGate requirePos={false}>{(loc) => <Employees location={loc} />}</PosGate>}
+      {tab === "positions" ? (
+        <>
+          <Positions />
+          <PosGate requirePos={false}>{(loc) => <Stations location={loc} />}</PosGate>
+        </>
+      ) : <PosGate requirePos={false}>{(loc) => <Employees location={loc} />}</PosGate>}
     </>
   );
 }

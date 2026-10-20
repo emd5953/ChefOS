@@ -280,3 +280,80 @@ export type InvitationPreview = {
   employee_name: string | null;
   expires_at: string;
 };
+
+// ---- Schedule ----
+export type ConflictKind =
+  | "overlap"
+  | "time_off_approved"
+  | "time_off_pending"
+  | "unavailable"
+  | "inactive_employee"
+  | "not_assigned_to_location"
+  | "unassigned";
+export type Shift = {
+  id: string;
+  location_id: string;
+  employee_id: string | null;
+  position_id: string;
+  station_id: string | null;
+  business_date: string;
+  starts_at: string;
+  ends_at: string;
+  break_minutes: number;
+  notes: string;
+  paid_hours: number;
+  /** Cents; null when there is no rate (or no one assigned). */
+  cost: number | null;
+  updated_at: string;
+};
+export type ShiftIn = {
+  employee_id: string | null;
+  position_id: string;
+  station_id: string | null;
+  starts_at: string;
+  ends_at: string;
+  break_minutes: number;
+  notes: string;
+};
+export type Conflict = { shift_id: string; kind: ConflictKind; detail: string };
+export type ScheduleEmployee = {
+  id: string;
+  display_name: string;
+  active: boolean;
+  primary_position_id: string | null;
+  position_ids: string[];
+  has_rate: boolean;
+  assigned: boolean;
+};
+export type ScheduleTotals = {
+  scheduled_hours: number;
+  projected_cost: number;
+  unrated_shifts: number;
+  forecast_sales: number | null;
+  projected_labor_pct: number | null;
+};
+export type ScheduleDay = ScheduleTotals & {
+  business_date: string;
+  forecast_basis: string[];
+  forecast_reason: "not_connected" | "not_enough_history" | null;
+};
+export type ScheduleResponse = {
+  location_id: string;
+  timezone: string;
+  currency: "USD";
+  schedule: {
+    id: string | null;
+    week_start: string;
+    version: number;
+    published_version: number | null;
+    published_at: string | null;
+    has_unpublished_changes: boolean;
+    unpublished_changes: number;
+  };
+  shifts: Shift[];
+  employees: ScheduleEmployee[];
+  days: ScheduleDay[];
+  week: ScheduleTotals & { reference_labor_pct: number | null; reference_period: DateRange };
+  conflicts: Conflict[];
+  freshness: Freshness[];
+};

@@ -19,7 +19,7 @@ The browser reaches the API only through the Next.js origin: `http://localhost:3
   "detail": "…", "request_id": "…", "errors": { "email": "Already registered" } }
 ```
 
-  `code` values: `validation_error`, `unauthenticated`, `session_expired`, `csrf_failed`, `forbidden`, `not_found`, `conflict`, `unavailable`, `internal_error`, `rate_limited`, `sous_unavailable`, `pos_owned_field`, `invitation_invalid` (410), `email_has_account`.
+  `code` values: `validation_error`, `unauthenticated`, `session_expired`, `csrf_failed`, `forbidden`, `not_found`, `conflict`, `unavailable`, `internal_error`, `rate_limited`, `sous_unavailable`, `pos_owned_field`, `invitation_invalid` (410), `email_has_account`, `shift_overlap`.
 - Every response carries `X-Request-ID`.
 - Lists are `{ "data": [...] }`.
 
@@ -218,6 +218,59 @@ type Invitation = { id: string; email: string; role: "manager" | "employee";
 - `email` defaults to the employee's email; without `employee_id` it is required (a manager who isn't on the schedule). A new invitation for the same employee (or email) revokes the pending one.
 - Managers may invite only `role: "employee"` and only to their locations; `employee_id` must be active and without a login (`409`).
 - Accepting creates the user, the membership with the invited role, `location_access` for the invited locations, and the employee link, in one transaction with a session. `410 invitation_invalid` for expired, revoked, or used tokens; `409 email_has_account` if the email already has a ChefOS login (users belong to one org in v1); `422` for a weak password. Invalid tokens count against the same per-IP limit as failed logins (`429`).
+
+### Schedule
+
+Weeks run Monday to Sunday (`week_start` must be a Monday, else `422`). Shift times are ISO 8601 with an offset; the API derives `business_date` from the location's timezone and business-day start (a 01:00 start belongs to the previous date). Managers edit a draft; employees see only what is published.
+
+```ts
+type Shift = { id: string; location_id: string; employee_id: string | null; position_id: string;
+               station_id: string | null; business_date: string; starts_at: string; ends_at: string;
+               break_minutes: number; notes: string;
+               paid_hours: number;          // (ends_at − starts_at) − break, so DST days are right
+               cost: number | null;         // cents; null without an effective rate or employee
+               updated_at: string }
+type ShiftIn = { employee_id?: string | null; position_id: string; station_id?: string | null;
+                 starts_at: string; ends_at: string; break_minutes?: number; notes?: string }
+type Conflict = { shift_id: string; detail: string;
+                  kind: "overlap" | "time_off_approved" | "time_off_pending" | "unavailable" |
+                        "inactive_employee" | "not_assigned_to_location" | "unassigned" }
+type DayTotals = { business_date: string; scheduled_hours: number; projected_cost: number;
+                   unrated_shifts: number; forecast_sales: number | null;
+                   forecast_basis: string[];   // the dates the median used
+                   forecast_reason: "not_connected" | "not_enough_history" | null;
+                   projected_labor_pct: number | null }
+```
+
+| Method | Path | Body | Response |
+| --- | --- | --- | --- |
+| GET | `/v1/team/schedule?location_id&week_start` | none | `200 Schedule` (below) |
+| POST | `/v1/team/schedule/shifts?location_id&week_start` | `ShiftIn` | `201 Shift` |
+| PATCH | `/v1/team/shifts/{id}` | partial `ShiftIn` + `expected_updated_at` (required) | `200 Shift`. `409` if the shift changed since `expected_updated_at` |
+| DELETE | `/v1/team/shifts/{id}` | none | `204` |
+| POST | `/v1/team/schedule/copy?location_id&week_start` | `{ from_week_start }` | `200 { copied, unassigned }`. `409` if the target week has shifts |
+
+```ts
+type Schedule = {
+  location_id: string; timezone: string; currency: "USD";
+  schedule: { id: string | null; week_start: string; version: number; published_version: number | null;
+              published_at: string | null; has_unpublished_changes: boolean;
+              unpublished_changes: number /* shifts added, removed, or changed since the last publish */ };
+  shifts: Shift[];
+  employees: Array<{ id: string; display_name: string; active: boolean; primary_position_id: string | null;
+                     position_ids: string[]; has_rate: boolean; assigned: boolean /* works at this location */ }>;
+  days: DayTotals[];                                       // 7, Monday first
+  week: Omit<DayTotals, "business_date" | "forecast_basis" | "forecast_reason"> &
+        { reference_labor_pct: number | null;              // actual labor % over the last 28 days
+          reference_period: { from: string; to: string } };
+  conflicts: Conflict[];
+  freshness: Freshness[] }                                 // the orders stream
+```
+
+- **Validation (422):** end after start, at least 15 minutes, at most 16 hours, break shorter than the shift, business date inside the week, an active employee, a non-archived position, a station of this location. Crossing midnight is allowed.
+- **Overlap:** the same employee on two overlapping shifts at any location is `409 shift_overlap`, naming the other shift. Other conflicts never block a write; they are listed per shift on read.
+- **Forecast:** median net sales (all channels) of the last 4 same-weekday business dates before min(date, today). Days after the location's first sales day with no sales count as 0 (closed). Fewer than 2 dates with history: `null`, `not_enough_history`; no POS: `null`, `not_connected`. Labor % = projected cost ÷ forecast. The week has a forecast only if every day has one.
+- **Copy** keeps local wall-clock times (DST-safe). Inactive employees, and employees who already work elsewhere at the copied time, are copied as unassigned.
 
 ### Positions and stations
 

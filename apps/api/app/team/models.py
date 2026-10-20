@@ -194,3 +194,113 @@ class Invitation(Base):
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     accepted_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), default=None)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+
+class Schedule(Base):
+    """One location's week (Monday start). `version` is bumped by every shift write and drives
+    optimistic concurrency on publish; `published_version` counts publishes."""
+
+    __tablename__ = "schedules"
+    __table_args__ = (
+        UniqueConstraint("location_id", "week_start", name="uq_schedules_location_week"),
+        CheckConstraint("extract(isodow from week_start) = 1", name="week_start_monday"),
+        Index("ix_schedules_org_id", "org_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=new_id)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
+    location_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("locations.id"))
+    week_start: Mapped[date] = mapped_column(Date)
+    version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    published_version: Mapped[int | None] = mapped_column(Integer, default=None)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    published_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), default=None)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, server_default=_NOW
+    )
+
+
+class Shift(Base):
+    """The draft working copy. Employees never read this table; they read published_shifts."""
+
+    __tablename__ = "shifts"
+    __table_args__ = (
+        CheckConstraint("ends_at > starts_at", name="ends_after_start"),
+        CheckConstraint("break_minutes >= 0", name="break_minutes"),
+        Index("ix_shifts_schedule_id", "schedule_id"),
+        Index("ix_shifts_employee_id_starts_at", "employee_id", "starts_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=new_id)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
+    location_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("locations.id"))
+    schedule_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("schedules.id", ondelete="CASCADE"))
+    employee_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("staff_members.id"), default=None
+    )
+    position_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("positions.id"))
+    station_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("stations.id"), default=None)
+    business_date: Mapped[date] = mapped_column(Date)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    break_minutes: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    notes: Mapped[str] = mapped_column(String, default="", server_default="")
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, server_default=_NOW
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, server_default=_NOW
+    )
+
+
+class PublishedShift(Base):
+    """The snapshot employees see, replaced per schedule on publish. `id` is the draft shift's
+    id, so republishing can diff old and new snapshots shift by shift."""
+
+    __tablename__ = "published_shifts"
+    __table_args__ = (
+        Index("ix_published_shifts_schedule_id", "schedule_id"),
+        Index("ix_published_shifts_employee_id_starts_at", "employee_id", "starts_at"),
+        Index("ix_published_shifts_location_date", "location_id", "business_date"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
+    location_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("locations.id"))
+    schedule_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("schedules.id", ondelete="CASCADE"))
+    employee_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("staff_members.id"), default=None
+    )
+    position_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("positions.id"))
+    station_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("stations.id"), default=None)
+    business_date: Mapped[date] = mapped_column(Date)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    break_minutes: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    notes: Mapped[str] = mapped_column(String, default="", server_default="")
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    published_version: Mapped[int] = mapped_column(Integer)
+
+
+class Notification(Base):
+    """In-app alert for one user. Clients poll; there is no external delivery."""
+
+    __tablename__ = "notifications"
+    __table_args__ = (Index("ix_notifications_user_id_read_at", "user_id", "read_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=new_id)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    kind: Mapped[str] = mapped_column(String)
+    title: Mapped[str] = mapped_column(String)
+    body: Mapped[str] = mapped_column(String, default="", server_default="")
+    link: Mapped[str | None] = mapped_column(String, default=None)
+    entity_type: Mapped[str | None] = mapped_column(String, default=None)
+    entity_id: Mapped[uuid.UUID | None] = mapped_column(default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, server_default=_NOW
+    )
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

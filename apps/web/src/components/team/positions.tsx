@@ -10,8 +10,8 @@ import { TableSkeleton } from "@/components/ui/skeleton";
 import { EmptyState, ErrorState } from "@/components/ui/states";
 import { useToast } from "@/components/ui/toast";
 import { api, errorMessage, isApiError } from "@/lib/api";
-import { keys, usePositions } from "@/lib/queries";
-import type { Position } from "@/lib/types";
+import { keys, usePositions, useStations } from "@/lib/queries";
+import type { Location, Position, Station } from "@/lib/types";
 import { Checkbox } from "./shared";
 
 export function Positions() {
@@ -124,5 +124,65 @@ function PositionRow({ position }: { position: Position }) {
         <span className="sr-only"> {position.name}</span>
       </Button>
     </li>
+  );
+}
+
+/** Stations: optional labels on a shift (Grill, Patio), per location. */
+export function Stations({ location }: { location: Location }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const q = useStations(location.id);
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string | undefined>();
+  const create = useMutation({
+    mutationFn: () => api<Station>("/v1/team/stations", { method: "POST", body: { location_id: location.id, name } }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: keys.team });
+      setName("");
+      setError(undefined);
+    },
+    onError: (e) => setError(errorMessage(e)),
+  });
+  const archive = useMutation({
+    mutationFn: (id: string) => api<Station>(`/v1/team/stations/${id}`, { method: "PATCH", body: { archived: true } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.team }),
+    onError: (e) => toast(errorMessage(e), "error"),
+  });
+  return (
+    <Card className="mt-5">
+      <form
+        className="flex flex-wrap items-end gap-3 p-5 sm:p-6"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!name.trim()) return setError("Enter a name");
+          create.mutate();
+        }}
+      >
+        <Field label={`New station at ${location.name}`} error={error} className="min-w-[200px] flex-1">
+          {(p) => <Input {...p} value={name} onChange={(e) => setName(e.target.value)} placeholder="Grill" />}
+        </Field>
+        <Button type="submit" loading={create.isPending} className="mb-px h-11">
+          <Plus aria-hidden /> Add
+        </Button>
+      </form>
+      {q.isPending ? (
+        <TableSkeleton rows={2} cols={2} />
+      ) : q.isError ? (
+        <ErrorState error={q.error} onRetry={() => void q.refetch()} />
+      ) : (q.data ?? []).length === 0 ? (
+        <p className="border-t border-border px-5 py-4 text-[13px] text-foreground/50 sm:px-6">No stations. They’re optional.</p>
+      ) : (
+        <ul className="divide-y divide-border border-t border-border">
+          {(q.data ?? []).map((s) => (
+            <li key={s.id} className="flex items-center justify-between px-5 py-2.5 text-[13px] sm:px-6">
+              {s.name}
+              <Button variant="ghost" size="sm" onClick={() => archive.mutate(s.id)}>
+                <Archive aria-hidden /> Archive<span className="sr-only"> {s.name}</span>
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }

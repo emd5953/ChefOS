@@ -370,7 +370,11 @@ async def update_employee(
 
 # Tables whose employee reference moves to the surviving record on merge. Later migrations
 # add their tables here.
-MERGE_REPOINT: list[tuple[str, str]] = [("timecards", "staff_member_id")]
+MERGE_REPOINT: list[tuple[str, str]] = [
+    ("timecards", "staff_member_id"),
+    ("shifts", "employee_id"),
+    ("published_shifts", "employee_id"),
+]
 
 
 async def merge_employees(

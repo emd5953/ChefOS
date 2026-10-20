@@ -4,14 +4,17 @@ Every /v1/team route requires owner, admin, or manager (`StaffDep`); employees g
 """
 
 import uuid
+from datetime import date
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query, Request, Response
 
 from app.identity.schemas import OrgOut, SessionOut, UserOut
 from app.security.sessions import OrgSession, StaffDep, set_session_cookie
-from app.team import invitations, service
+from app.team import invitations, schedule, service
 from app.team.schemas import (
+    CopyOut,
+    CopyRequest,
     EmployeeCreate,
     EmployeeList,
     EmployeeOut,
@@ -27,6 +30,10 @@ from app.team.schemas import (
     PositionList,
     PositionOut,
     PositionUpdate,
+    ScheduleOut,
+    ShiftIn,
+    ShiftOut,
+    ShiftPatch,
     StationCreate,
     StationList,
     StationOut,
@@ -38,6 +45,7 @@ team = APIRouter(prefix="/v1/team", tags=["team"])
 public = APIRouter(prefix="/v1/invitations", tags=["team"])
 
 LocationId = Annotated[uuid.UUID, Query()]
+WeekStart = Annotated[date, Query()]
 
 
 # ---------------------------------------------------------------- employees
@@ -127,6 +135,43 @@ async def update_station(
 ) -> StationOut:
     station = await service.update_station(db, await service.scope_for(ctx), id, body)
     return StationOut.model_validate(station)
+
+
+# ---------------------------------------------------------------- schedule
+
+
+@team.get("/schedule", response_model=ScheduleOut)
+async def read_schedule(
+    ctx: StaffDep, db: OrgSession, location_id: LocationId, week_start: WeekStart
+) -> ScheduleOut:
+    return await schedule.read_schedule(db, await service.scope_for(ctx), location_id, week_start)
+
+
+@team.post("/schedule/shifts", status_code=201, response_model=ShiftOut)
+async def create_shift(
+    body: ShiftIn, ctx: StaffDep, db: OrgSession, location_id: LocationId, week_start: WeekStart
+) -> ShiftOut:
+    scope = await service.scope_for(ctx)
+    return await schedule.create_shift(db, scope, location_id, week_start, body)
+
+
+@team.patch("/shifts/{id}", response_model=ShiftOut)
+async def update_shift(id: uuid.UUID, body: ShiftPatch, ctx: StaffDep, db: OrgSession) -> ShiftOut:
+    return await schedule.update_shift(db, await service.scope_for(ctx), id, body)
+
+
+@team.delete("/shifts/{id}", status_code=204)
+async def delete_shift(id: uuid.UUID, ctx: StaffDep, db: OrgSession) -> Response:
+    await schedule.delete_shift(db, await service.scope_for(ctx), id)
+    return Response(status_code=204)
+
+
+@team.post("/schedule/copy", response_model=CopyOut)
+async def copy_week(
+    body: CopyRequest, ctx: StaffDep, db: OrgSession, location_id: LocationId, week_start: WeekStart
+) -> CopyOut:
+    scope = await service.scope_for(ctx)
+    return await schedule.copy_week(db, scope, location_id, week_start, body.from_week_start)
 
 
 # ---------------------------------------------------------------- invitations
