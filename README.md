@@ -14,7 +14,7 @@ Modules: **Team**, **Commerce**, **Inventory**. Shared capabilities: **Integrati
 | Commerce (Phase 2) | Built: overview, sales, menu items, freshness. Phase 2 is complete |
 | Sous (read-only) | Built: local model via Ollama, 5 Commerce tools, grounded answers, 40-case eval (`make sous-eval`) |
 | Team | Not started ([roadmap](docs/roadmap.md)) |
-| Inventory (Phase 4) | In progress: catalog and stock foundation ([spec](docs/specs/inventory.md)) |
+| Inventory (Phase 4) | Done: catalog, counts, purchasing, receiving, recipes, plate costs, and mobile workflows ([spec](docs/specs/inventory.md)) |
 | Marketing site | Served by the web app at `/` |
 
 ## Run the demo
@@ -29,7 +29,9 @@ cd apps/web && npm install && npm run dev
 
 Open http://localhost:3000/login and sign in as `owner@chefos.local` / `ChefOS-demo-2026!`.
 
-**Walkthrough:** Overview (live today, last 7 days vs previous, 30-day trend) → Sales (any range, compare to previous period or last year, channels, labor %) → Menu items → Integrations (sync health, backfill, mapping issues, sync runs). New orders from the simulated POS arrive every minute during service hours (America/New_York).
+For the optional inventory walkthrough, run `cd apps/api && uv run python -m app.cli seed-inventory-demo` after the demo account and location exist. This creates Juniper House inventory, supplier packs, pars, a partially received order, and costed recipes linked to POS menu items.
+
+**Walkthrough:** Overview (live today, last 7 days vs previous, 30-day trend) → Sales (any range, compare to previous period or last year, channels, labor %) → Menu items → Integrations (sync health, backfill, mapping issues, sync runs). The optional inventory walkthrough adds stock/par review → phone-sized count and exception review → purchase order/receipt → recipe plate cost. New orders from the simulated POS arrive every minute during service hours (America/New_York).
 
 | URL | What |
 | --- | --- |

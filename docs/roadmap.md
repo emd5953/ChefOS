@@ -13,7 +13,7 @@ As of 2026-10-20:
 - **Phase 1:** M1–M5 done in simulated mode. Real-sandbox mode is untested.
 - **Phase 2:** done. Commerce views built, marketing site moved into `apps/web`, prototype deleted.
 - **Phase 5:** Sous read-only built ahead of order over Commerce data (milestones 1–4). The eval set passes 39/40 on qwen3:8b. Team and Inventory tools follow their modules.
-- **Phase 4:** in progress on branch `inventory`; INV-1 catalog and stock groundwork is underway.
+- **Phase 4:** done on branch `inventory`; INV-1 through INV-4 and MOB-3 are complete.
 - **Phases 3, 6:** not started.
 - **Prototype workspace:** deleted from `main`. UX reference at tag `prototype-v0`; run it with `git worktree add ../chefos-prototype prototype-v0 && cd ../chefos-prototype && python3 server.py`.
 
@@ -47,7 +47,7 @@ Employees linked to POS team members, schedule builder with projected labor cost
 
 **Exit:** a GM builds and publishes a week's schedule against forecast. Employees see it on mobile, and time-off requests flow through approval.
 
-## Phase 4: Inventory core (P0/P1)
+## Phase 4: Inventory core (P0/P1) — done
 
 Items, packs and unit conversions, pars, storage-area count sessions with exceptions, purchase orders and receiving, recipes linked to POS menu items. INV-1 to INV-4.
 
