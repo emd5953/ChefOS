@@ -52,6 +52,7 @@ Other targets: `make test`, `make lint`, `make smoke`, `make down` (keep data), 
 | [Spec: Integration layer](docs/specs/integration-layer.md) | Square connector, ingestion pipeline, freshness |
 | [Spec: Sous](docs/specs/sous.md) | Assistant design, tools, approval path |
 | [Research: ChefOS](docs/research/chefos-public-site.md) | Competitive research on the reference product |
+| [Interview prep](docs/interview-prep.md) | Engineering topics mapped to this codebase, and production gaps |
 
 ## Run the prototype
 
