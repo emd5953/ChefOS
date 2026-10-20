@@ -13,6 +13,7 @@ from sqlalchemy import (
     Boolean,
     Date,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     Numeric,
@@ -36,7 +37,15 @@ _NOW = text("now()")
 
 class MenuItem(Base):
     __tablename__ = "menu_items"
-    __table_args__ = (Index("ix_menu_items_org_id", "org_id"),)
+    __table_args__ = (
+        Index("ix_menu_items_org_id", "org_id"),
+        UniqueConstraint("org_id", "id", name="uq_menu_items_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "recipe_id"],
+            ["recipes.org_id", "recipes.id"],
+            name="fk_menu_items_recipe_org",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=new_id)
     org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
