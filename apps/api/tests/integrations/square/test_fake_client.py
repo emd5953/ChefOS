@@ -148,7 +148,7 @@ def test_refunds_shape(history: History) -> None:
     assert refunded
     for o in refunded:
         closed, upd = parse_ts(o["closed_at"]), parse_ts(o["updated_at"])
-        # 1–3 days after close, then held until 6pm local on the refund day (can add up to a day).
+        # 1-3 days after close, then held until 6pm local on the refund day (can add up to a day).
         assert timedelta(days=1) <= upd - closed <= timedelta(days=4)
         assert o["returns"][0]["return_line_items"]
         assert parse_ts(o["refunds"][0]["created_at"]) == upd
