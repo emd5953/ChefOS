@@ -368,6 +368,15 @@ Inventory routes require an authenticated session. Catalog mutations require own
 
 Item base units must be `g` for mass, `ml` for volume, or `ea` for count. INV-1 remaining catalog endpoints and later count, purchasing, recipe, and mobile workflows are documented in the [inventory spec](specs/inventory.md).
 
+### Waste (INV-5)
+
+| Method | Path | Body / query | Response |
+| --- | --- | --- | --- |
+| POST | `/v1/inventory/waste` | `{ location_id, item_id, quantity, unit?, reason, idempotency_key }` | `201 WasteEntry` (replay returns the original entry) |
+| GET | `/v1/inventory/waste?location_id&from&to` | inclusive business-date range, at most 367 days | `200 { data: WasteEntry[] }`, newest first |
+
+`quantity` is positive; `unit` defaults to the item's base unit and otherwise must be a configured conversion. Waste snapshots the latest known per-base-unit receipt cost, decrements stock, adds a `waste` stock movement, and writes an audit event atomically. Entries that would make stock negative are rejected. `WasteEntry` includes the quantity in base units, reason, business date, creator, and creation time.
+
 ## Sous
 
 Read-only operations assistant over a location's sales, labor, published schedule and inventory pars. The model picks from eight typed tools (`get_sales_summary`, `get_daily_sales`, `get_top_items`, `get_today`, `get_data_freshness`, `get_labor_summary`, `get_schedule`, `find_items_below_par`) and explains what they return. Numbers in the answer must match tool results; evidence and limitations are computed by the API. Design: [Sous spec](specs/sous.md).
