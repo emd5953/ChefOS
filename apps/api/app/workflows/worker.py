@@ -18,7 +18,7 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxR
 
 from app.config import get_settings
 from app.telemetry import setup_telemetry
-from app.workflows import integrations, ping
+from app.workflows import integrations, ping, team
 from app.workflows.client import TASK_QUEUE, get_temporal_client
 
 WORKFLOWS: list[type[Any]] = [
@@ -36,6 +36,7 @@ ACTIVITIES: list[Callable[..., Any]] = [
     integrations.finish_backfill_activity,
     integrations.webhook_fetch_activity,
     integrations.token_refresh_activity,
+    team.attendance_check_activity,
 ]
 
 # Backfill chunks run on their own queue with lower concurrency, so a 13-month backfill can

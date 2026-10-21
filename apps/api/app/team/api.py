@@ -13,8 +13,9 @@ from app.identity.schemas import OrgOut, SessionOut, UserOut
 from app.security.sessions import AuthDep, OrgSession, StaffDep, set_session_cookie
 
 # `requests` also registers the time-off and availability conflict checks with the builder.
-from app.team import invitations, me, notify, requests, schedule, service
+from app.team import attendance, invitations, me, notify, requests, schedule, service
 from app.team.schemas import (
+    AttendanceOut,
     AvailabilityIn,
     AvailabilityOut,
     CopyOut,
@@ -208,6 +209,21 @@ async def publish(
         expected_version=body.expected_version,
         acknowledge_conflicts=body.acknowledge_conflicts,
     )
+
+
+# ---------------------------------------------------------------- attendance
+
+
+@team.get("/attendance", response_model=AttendanceOut)
+async def read_attendance(
+    ctx: StaffDep,
+    db: OrgSession,
+    location_id: LocationId,
+    from_: Annotated[date | None, Query(alias="from")] = None,
+    to: date | None = None,
+) -> AttendanceOut:
+    """Published shifts vs imported timecards per business day (default: today)."""
+    return await attendance.attendance(db, await service.scope_for(ctx), location_id, from_, to)
 
 
 # ---------------------------------------------------------------- requests inbox

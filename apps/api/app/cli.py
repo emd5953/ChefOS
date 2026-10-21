@@ -785,7 +785,8 @@ TEAM_EMPLOYEE_EMAIL = "maya@chefos.local"
 
 
 async def seed_team(org_id: uuid.UUID, owner_user_id: uuid.UUID) -> None:
-    """Team demo data: manager and employee logins and a published current week (idempotent)."""
+    """Team demo data: manager and employee logins, a published current week, and today's
+    late/missed clock-ins (idempotent)."""
     from app.team import demo as team_demo
 
     created = await team_demo.seed_logins(org_id, owner_user_id, DEMO_PASSWORD)
@@ -794,6 +795,9 @@ async def seed_team(org_id: uuid.UUID, owner_user_id: uuid.UUID) -> None:
     shifts = await team_demo.seed_week(org_id, owner_user_id)
     if shifts:
         print(f"Published this week's schedule ({shifts} shifts).")
+    late, alerts = await team_demo.seed_attendance(org_id, owner_user_id)
+    if late:
+        print(f"Published {late} shift(s) today with no clock-in ({alerts} clock-in alerts).")
 
 
 def main(argv: list[str] | None = None) -> int:

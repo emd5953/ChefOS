@@ -6,6 +6,8 @@ Backfill        newest -> oldest, one chunk per activity, on its own task queue 
                 starve incremental sync
 WebhookFetch    targeted fetch triggered by a verified webhook
 TokenRefresh    daily; refreshes credentials expiring within 7 days
+
+ConnectionSync also runs Team's clock-in check (app.workflows.team) after each pass.
 """
 
 import uuid
@@ -18,6 +20,7 @@ from temporalio.exceptions import ActivityError
 
 with workflow.unsafe.imports_passed_through():
     from app.integrations import sync
+    from app.workflows.team import AttendanceInput, attendance_check_activity
 
 BACKFILL_QUEUE = "chefos-backfill"
 REFERENCE_STREAMS = ["locations", "catalog", "team_members"]
@@ -150,12 +153,24 @@ async def token_refresh_activity(data: TokenRefreshInput) -> bool:
 class ConnectionSync:
     @workflow.run
     async def run(self, data: SyncInput) -> SyncResult:
-        return await workflow.execute_activity(
+        result = await workflow.execute_activity(
             sync_connection_activity,
             data,
             start_to_close_timeout=timedelta(minutes=9),
             retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(seconds=5)),
         )
+        # Late/missed clock-ins: time passing alone can make a shift late, so this runs on every
+        # pass, not only when timecards changed. A failure here never fails the sync.
+        try:
+            await workflow.execute_activity(
+                attendance_check_activity,
+                AttendanceInput(org_id=data.org_id, connection_id=data.connection_id),
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=RetryPolicy(maximum_attempts=2),
+            )
+        except ActivityError as exc:
+            workflow.logger.warning("attendance check failed: %s", exc.cause or exc)
+        return result
 
 
 @workflow.defn

@@ -500,7 +500,9 @@ export type NotificationKind =
   | "availability_decided"
   | "time_off_requested"
   | "availability_submitted"
-  | "employee_deactivated";
+  | "employee_deactivated"
+  | "shift_late"
+  | "shift_missed";
 export type AppNotification = {
   id: string;
   kind: NotificationKind | string;
@@ -602,7 +604,49 @@ export type TimeOffIn = {
   end_time?: string | null;
   reason?: string;
 };
-export type RequestsInbox = {
-  time_off: TimeOff[];
-  availability: AvailabilitySet[];
+export type RequestsInbox = { time_off: TimeOff[]; availability: AvailabilitySet[] };
+
+// ---- Attendance (/v1/team/attendance) ----
+export type AttendanceStatus = "upcoming" | "awaiting_data" | "on_time" | "late" | "missed";
+export type AttendanceShift = {
+  shift_id: string;
+  employee_id: string | null;
+  employee_name: string | null;
+  position_id: string;
+  position_name: string;
+  position_color: string;
+  starts_at: string;
+  ends_at: string;
+  scheduled_hours: number;
+  clock_in: string | null;
+  clock_out: string | null;
+  actual_hours: number;
+  status: AttendanceStatus;
+  minutes_late: number | null;
+};
+export type UnscheduledTimecard = {
+  timecard_id: string;
+  employee_id: string | null;
+  employee_name: string | null;
+  clock_in: string;
+  clock_out: string | null;
+  actual_hours: number;
+};
+export type AttendanceDay = {
+  business_date: string;
+  scheduled_hours: number;
+  actual_hours: number;
+  counts: Record<AttendanceStatus, number>;
+  shifts: AttendanceShift[];
+  unscheduled: UnscheduledTimecard[];
+};
+export type AttendanceResponse = {
+  location_id: string;
+  timezone: string;
+  period: { from: string; to: string };
+  grace_minutes: number;
+  as_of: string | null;
+  open_shifts_excluded: number;
+  days: AttendanceDay[];
+  freshness: Freshness[];
 };

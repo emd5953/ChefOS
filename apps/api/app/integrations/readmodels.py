@@ -1,5 +1,6 @@
 """Read-model rebuilds: daily_sales and daily_labor, per affected (location, business_date).
 
+`daily_labor.scheduled_hours` comes from published shifts; actual hours and cost from timecards.
 Rebuilds read canonical tables only, so they are idempotent: the same canonical state always
 produces the same rows. A transaction-scoped advisory lock per key keeps concurrent writers
 (incremental sync vs. backfill) from interleaving a delete/insert.
@@ -59,20 +60,49 @@ FROM s FULL JOIN r ON s.location_id = r.location_id
   AND s.business_date = r.business_date AND s.channel = r.channel
 """)
 
-_REBUILD_LABOR = text("""
-WITH keys AS (
+# Paid hours of published shifts (all shifts, open ones included, as the schedule builder
+# counts them) per affected key. Drafts never count: only what employees were given.
+_SCHEDULED_CTE = """
+keys AS (
   SELECT l AS location_id, d AS business_date
   FROM unnest(CAST(:locs AS uuid[]), CAST(:dates AS date[])) AS t(l, d)
-)
+), sch AS (
+  SELECT p.location_id, p.business_date,
+         sum(CAST(extract(epoch FROM p.ends_at - p.starts_at) AS numeric) / 3600
+             - CAST(p.break_minutes AS numeric) / 60) AS hours
+  FROM published_shifts p JOIN keys k
+    ON k.location_id = p.location_id AND k.business_date = p.business_date
+  WHERE p.org_id = :org
+  GROUP BY 1, 2
+)"""
+
+# The CTE is a module constant, not input.
+_REBUILD_LABOR = text(
+    f"""
+WITH {_SCHEDULED_CTE}
 INSERT INTO daily_labor (org_id, location_id, business_date, scheduled_hours, actual_hours,
   actual_cost, currency, computed_at, data_as_of)
-SELECT :org, t.location_id, t.business_date, 0, sum(t.paid_hours), sum(t.cost),
-  max(t.currency), now(), :as_of
+SELECT :org, t.location_id, t.business_date, COALESCE(max(sch.hours), 0), sum(t.paid_hours),
+  sum(t.cost), max(t.currency), now(), :as_of
 FROM timecards t JOIN keys k
   ON k.location_id = t.location_id AND k.business_date = t.business_date
+LEFT JOIN sch ON sch.location_id = t.location_id AND sch.business_date = t.business_date
 WHERE t.org_id = :org
 GROUP BY t.location_id, t.business_date
-""")
+"""  # noqa: S608
+)
+
+# Publishing changes scheduled hours without touching timecards: update the rows that exist and
+# keep their data_as_of (it describes the timecard import, not the schedule).
+_REFRESH_SCHEDULED = text(
+    f"""
+WITH {_SCHEDULED_CTE}
+UPDATE daily_labor dl SET scheduled_hours = COALESCE(sch.hours, 0), computed_at = now()
+FROM keys k LEFT JOIN sch
+  ON sch.location_id = k.location_id AND sch.business_date = k.business_date
+WHERE dl.org_id = :org AND dl.location_id = k.location_id AND dl.business_date = k.business_date
+"""  # noqa: S608
+)
 
 
 def _params(org_id: uuid.UUID, pairs: Iterable[Pair], as_of: datetime) -> dict[str, object] | None:
@@ -109,3 +139,17 @@ async def rebuild_daily_labor(
     await db.execute(_DELETE_LABOR, {k: params[k] for k in ("org", "locs", "dates")})
     await db.execute(_REBUILD_LABOR, params)
     return len(params["dates"])  # type: ignore[arg-type]
+
+
+async def refresh_scheduled_hours(
+    db: AsyncSession, org_id: uuid.UUID, pairs: Iterable[Pair]
+) -> int:
+    """Re-derive scheduled_hours on existing daily_labor rows (after a schedule publish). Days
+    without timecards have no row; they get one, scheduled hours included, on the next rebuild."""
+    ordered = sorted(set(pairs))
+    if not ordered:
+        return 0
+    params = {"org": org_id, "locs": [p[0] for p in ordered], "dates": [p[1] for p in ordered]}
+    await db.execute(_LOCK, {"kind": "labor", "locs": params["locs"], "dates": params["dates"]})
+    await db.execute(_REFRESH_SCHEDULED, params)
+    return len(ordered)

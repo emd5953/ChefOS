@@ -307,6 +307,36 @@ type Schedule = {
 
 Each pending time-off item lists the published shifts it overlaps (`overlapping_shifts`). Approving never deletes shifts: the builder flags them (`time_off_approved`; `time_off_pending` while undecided; `unavailable` against the employee's approved availability). Decisions notify the employee.
 
+### Attendance (managers)
+
+| Method | Path | Body | Response |
+| --- | --- | --- | --- |
+| GET | `/v1/team/attendance?location_id&from&to` | none | `200 Attendance`. `from`/`to` are business dates, default today; at most 31 days. `404` for a location the caller doesn't manage |
+
+```ts
+type AttendanceStatus = "upcoming" | "awaiting_data" | "on_time" | "late" | "missed";
+type Attendance = { location_id: string; timezone: string; period: { from: string; to: string };
+                    grace_minutes: 10; as_of: string | null; open_shifts_excluded: number;
+                    freshness: DataFreshness[] /* timecards */;
+                    days: { business_date: string; scheduled_hours: number; actual_hours: number;
+                            counts: Record<AttendanceStatus, number>;
+                            shifts: { shift_id: string; employee_id: string; employee_name: string | null;
+                                      position_id: string; position_name: string; position_color: string;
+                                      starts_at: string; ends_at: string; scheduled_hours: number;
+                                      clock_in: string | null; clock_out: string | null; actual_hours: number;
+                                      status: AttendanceStatus; minutes_late: number | null }[];
+                            unscheduled: { timecard_id: string; employee_id: string | null;
+                                           employee_name: string | null; clock_in: string;
+                                           clock_out: string | null; actual_hours: number }[] }[] };
+```
+
+- Compares **published** shifts with imported timecards. A timecard belongs to the same employee's shift whose window `[start − 2h, end)` holds its clock-in (nearest start wins); the rest are `unscheduled`. Open shifts count toward `scheduled_hours` but are not judged.
+- **Late:** no clock-in 10 minutes after the start (or a clock-in after that). **Missed:** none by the end. Overnight shifts belong to the business date they start on.
+- Statuses are judged as of `as_of`, the instant timecards are imported through (the location's `timecards` stream, capped at now). A shift due after it is `awaiting_data`, never late; a location without a timecard source has `as_of: null` and is never judged.
+- Actual hours are paid hours of closed timecards; an open timecard counts 0 until clock-out.
+- **Alerts:** after every scheduled sync of a connection, late and missed shifts that started in the last 36 hours notify the location's managers (owners, admins, managers with access) as `shift_late` / `shift_missed`, linking to `/app/team/attendance`. At most one per recipient, shift, and kind.
+- `daily_labor.scheduled_hours` is the paid hours of published shifts for that day, set on each labor rebuild and refreshed on publish. Days without timecards have no `daily_labor` row.
+
 ### Positions and stations
 
 | Method | Path | Body | Response |
@@ -344,7 +374,7 @@ type MyWeek = { week_start: string; employee: { id: string; display_name: string
                                      employee_name: string; position_name: string; position_color: string }> }
 type Notification = { id: string; kind: "schedule_published" | "schedule_changed" | "time_off_decided" |
                         "availability_decided" | "time_off_requested" | "availability_submitted" |
-                        "employee_deactivated";
+                        "employee_deactivated" | "shift_late" | "shift_missed";
                       title: string; body: string; link: string | null /* in-app path */;
                       entity_type: string | null; entity_id: string | null;
                       created_at: string; read_at: string | null }

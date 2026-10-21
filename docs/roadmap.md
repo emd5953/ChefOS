@@ -16,6 +16,7 @@ As of 2026-10-20:
 - **Phase 3:** done ([spec](specs/team.md), T1–T5). Employees from Square, logins by invitation, schedule builder with forecast and projected labor %, publish with change alerts, availability and time off with approvals, and an employee mobile view at `/my` ([ADR 0004](adr/0004-mobile-as-responsive-web.md)). Seeded by `make demo`.
 - **Phase 4:** done ([spec](specs/inventory.md)). INV-1 to INV-4 and MOB-3: catalog, counts with exceptions, purchasing and receiving, recipes with plate cost, phone-sized count and receive.
 - **Phase 6:** not started.
+- **Phase 6 · TEAM-6 clock-in alerts:** built ([spec](specs/breadth.md), B6). Late/missed alerts to managers after each sync, attendance view at Team → Attendance, `daily_labor.scheduled_hours` filled from published shifts.
 - **Prototype workspace:** deleted from `main`. UX reference at tag `prototype-v0`; run it with `git worktree add ../chefos-prototype prototype-v0 && cd ../chefos-prototype && python3 server.py`.
 
 ## Phase 0: Platform foundation

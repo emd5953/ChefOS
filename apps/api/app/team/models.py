@@ -40,6 +40,8 @@ def _now() -> datetime:
 
 
 _NOW = text("now()")
+# The notification kinds deduplicated by uq_notifications_attendance (migration 0013).
+ATTENDANCE_KINDS_SQL = "kind IN ('shift_late', 'shift_missed')"
 
 
 class StaffMember(Base):
@@ -291,7 +293,18 @@ class Notification(Base):
     """In-app alert for one user. Clients poll; there is no external delivery."""
 
     __tablename__ = "notifications"
-    __table_args__ = (Index("ix_notifications_user_id_read_at", "user_id", "read_at"),)
+    __table_args__ = (
+        Index("ix_notifications_user_id_read_at", "user_id", "read_at"),
+        # Clock-in alerts: at most one per recipient, shift (entity_id), and kind.
+        Index(
+            "uq_notifications_attendance",
+            "user_id",
+            "kind",
+            "entity_id",
+            unique=True,
+            postgresql_where=text(ATTENDANCE_KINDS_SQL),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=new_id)
     org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
