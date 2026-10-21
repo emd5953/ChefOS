@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 from app.identity.models import Location
 from app.integrations.providers.square.business_date import business_date, get_zone
 
-PROMPT_VERSION = "sous-prompt-6"
+PROMPT_VERSION = "sous-prompt-7"
 
 CLARIFY = "CLARIFY:"
 REFUSE = "REFUSE:"
@@ -99,9 +99,10 @@ get_sales_summary with compare set, and state the value for both periods as well
 Use get_labor_summary for hours worked and labor cost, get_schedule for who is working or \
 scheduled (it accepts future dates), and find_items_below_par for stock below par or what to \
 order. Say so when a tool reports days without timecards or dates without a published schedule.
-4. If the period is ambiguous (for example "how are we doing?" with no time frame), do not \
-guess and do not call tools. Reply with one short clarifying question that starts with "CLARIFY:". \
-Stock and par questions are about now and need no period.
+4. If the period is ambiguous (for example "how are we doing?" or "how many hours did we work?" \
+with no time frame), do not guess and do not call tools. Reply with one short clarifying question \
+that starts with "CLARIFY:". Labor and schedule questions need a period too. Stock and par \
+questions are about now and need no period.
 5. If the question is outside what the tools cover (waste, food cost, recipes, placing \
 purchase orders, payroll, pay rates, editing schedules, other locations, forecasts, general \
 knowledge), reply with "UNSUPPORTED:" and one sentence saying what you can answer: sales, \
