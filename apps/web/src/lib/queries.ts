@@ -3,6 +3,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "./api";
 import type {
+  Briefing,
   CompareMode,
   Connection,
   ConnectionDetail,
@@ -40,6 +41,7 @@ export const keys = {
   daily: (loc: string, from: string, to: string) => ["daily", loc, from, to] as const,
   items: (loc: string, from: string, to: string) => ["items", loc, from, to] as const,
   sousStatus: ["sous-status"] as const,
+  briefing: (loc: string, date: string) => ["sous-briefing", loc, date] as const,
   employees: (loc: string, inactive: boolean) => ["team", "employees", loc, inactive] as const,
   positions: (archived: boolean) => ["team", "positions", archived] as const,
   stations: (loc: string) => ["team", "stations", loc] as const,
@@ -177,6 +179,18 @@ export function useSousStatus() {
     queryFn: () => api<SousStatus>("/v1/sous/status"),
     retry: false,
     staleTime: 30_000,
+  });
+}
+
+/** `date` "" means today at the location (the API resolves it). */
+export function useBriefing(locationId: string | undefined, date: string) {
+  return useQuery({
+    queryKey: keys.briefing(locationId ?? "", date),
+    queryFn: () =>
+      api<Briefing>("/v1/sous/briefing", { query: { location_id: locationId, date: date || undefined } }),
+    enabled: !!locationId,
+    placeholderData: keepPreviousData,
+    refetchInterval: 5 * 60_000,
   });
 }
 

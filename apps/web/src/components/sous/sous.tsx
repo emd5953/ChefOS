@@ -22,6 +22,7 @@ import type {
 } from "@/lib/types";
 import { useReducedMotion } from "@/lib/use-reduced-motion";
 import { AnswerView } from "./answer";
+import { BriefingCard } from "./briefing";
 
 const MAX_CHARS = 500;
 const COUNTER_FROM = 400;
@@ -66,13 +67,16 @@ export function Sous() {
         title="Sous"
         description={
           current
-            ? `Ask about sales, labor and menu items for ${current.name}.`
-            : "Ask about sales, labor and menu items."
+            ? `Today’s briefing for ${current.name}, and answers about sales, labor and menu items.`
+            : "Today’s briefing, and answers about sales, labor and menu items."
         }
       />
       {current ? (
-        // Keyed so the conversation resets when the location changes.
-        <Chat key={current.id} locationId={current.id} />
+        // Keyed so the briefing and conversation reset when the location changes.
+        <>
+          <BriefingCard key={`briefing-${current.id}`} locationId={current.id} />
+          <Chat key={current.id} locationId={current.id} />
+        </>
       ) : isLoading ? (
         <Skeleton className="h-64 w-full rounded-card" />
       ) : (
