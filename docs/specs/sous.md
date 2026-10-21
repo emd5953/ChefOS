@@ -1,6 +1,6 @@
 # Sous: Operations Assistant
 
-**Status:** In progress (milestones 1–4) · **Owner:** TBD · **Last updated:** 2026-10-20
+**Status:** In progress (milestones 1–4, Team/Inventory reads) · **Owner:** TBD · **Last updated:** 2026-10-21
 **Related:** [ADR 0003: Read-only first](../adr/0003-sous-read-only-first.md), [Integration layer](integration-layer.md), [Architecture](../architecture.md)
 
 ## Problem
@@ -135,7 +135,7 @@ On approval, the command endpoint reauthenticates the approver, checks draft exp
 
 ## v1 build contract (milestones 1–4)
 
-Team and Inventory don't exist yet, so v1 tools cover Commerce and data freshness only. `find_items_below_par`, `get_waste_summary` and `get_schedule` wait for their modules. Labor % comes from the sales summary, so there's no separate labor tool.
+v1 tools cover Commerce and data freshness. `get_labor_summary`, `get_schedule` and `find_items_below_par` were added once Team and Inventory existed (see "Team and Inventory reads" below). `get_waste_summary` still waits for waste entries.
 
 ### HTTP
 
@@ -262,6 +262,42 @@ event: error    data: { "status": int, "code": str, "detail": str }  # always la
 - **No match:** returns the usual 503 `sous_unavailable`, or an `error` event on the stream.
 - **Follow-ups:** questions that rely on history ("and the week before?") never match.
 - **Response:** `SousAnswer` gains `mode: "model" | "fallback"`. A fallback answer has `kind: "answer"`, `model: "fallback"`, and the limitation "The assistant model is unavailable, so this is a fixed-format answer from the same figures."
+
+## Team and Inventory reads (Phase 6, B1)
+
+**Status:** Built · 2026-10-21 · prompt `sous-prompt-6`
+
+### Tools
+
+The registry signatures above name `location_ids`. As with the v1 tools, that scope is bound by the server, not supplied by the model: the API authorizes one location, and the model's arguments are dates and options only (`extra="forbid"` rejects a location argument). Before any query, `run_tool` rechecks the location against the org and against the caller's current location scope (`allowed`, fetched per tool call by the orchestrator), and returns `ok: false` with "This location is outside your access." otherwise.
+
+| Tool | Args (model-supplied) | Reads | Caps |
+| --- | --- | --- | --- |
+| `get_labor_summary` → `LaborFacts` | `from`, `to` | `commerce.service.daily` plus `daily_labor` row dates | 92 days, no future dates; day-by-day only for ≤14 days |
+| `get_schedule` → `ScheduleFacts` | `from`, `to` | `published_shifts` of published `schedules` | 14 days, up to 56 days ahead, 400 back; 60 shifts listed |
+| `find_items_below_par` → `ItemFacts` | `limit?: 1..50` (default 25) | active `inventory_items` with this location's `inventory_pars` and `inventory_levels` | 50 items listed, 10 no-par names |
+
+The `*Facts` models live in `app/sous/schemas.py` and are dumped to JSON for the model, so the shape is typed and versioned with the prompt.
+
+- **Labor.** Actual paid hours and cost from timecards, labor % = cost / net sales (the `get_sales_summary` definition). `daily_labor` has a row only for days with timecards, so a day without one is reported as unknown (`labor_hours: null`), never zero. With no timecards at all, hours, cost and labor % are null. `scheduled_hours` is not used.
+- **Schedule.** Published shifts only; drafts are never shown. Each shift has the business date it starts on, local start and end times ("10pm"), `ends_next_day` for overnight shifts, and paid hours. Days not covered by a published week are listed in `unpublished_dates`. `draft_has_unpublished_changes` says the draft differs from what employees see, without showing it. Costs and rates are not returned.
+- **Below par.** Below par means on hand < par. Items are ordered most depleted first (share of par on hand). Quantities are in the item's base unit (`g`, `ml`, `ea`). An item with a par but no stock record reads 0 and is flagged `never_counted`. Items without a par are counted and named, not checked.
+- **Text.** Employee, position, station, item and category names go through the same instruction filter as menu item names and show as `[name hidden]` when they read as instructions.
+
+### Evidence and limitations
+
+- Evidence: labor hours (`hours`), labor cost (`usd_cents`), labor % and days with timecards; published shifts and scheduled hours (plus per-day shift counts for ≤7 days), `as_of` the latest publish time; items below par, items without a par, and on hand and par per listed item in its base unit (`g`, `ml`, `ea`, new `Evidence.unit` values), `as_of` the stock record's last change.
+- `ToolResult.notes` carries data gaps the tool found. They join the deterministic `limitations`: days without timecards ("labor is unknown, not zero"), dates without a published schedule, unpublished draft changes, truncated lists, items without a par, and below-par items never counted. Freshness limitations still come from the streams each tool touches (`timecards` and `orders` for labor; schedule and inventory are first-party, with no integration stream).
+
+### Prompt (`sous-prompt-6`)
+
+Adds labor-hours, scheduled-hours and below-par definitions, tool-choice guidance, and future date references (tomorrow, this week Monday to Sunday, next week) marked schedule-only. Schedules and inventory are no longer listed as unsupported. Editing schedules, placing purchase orders, waste and pay rates still are. Stock and par questions need no period.
+
+### Evaluation
+
+- `cases.yaml` has 53 cases. New categories are `labor`, `schedule` and `inventory`. New scope probes name another location for staffing and stock. `clarify_labor_hours` covers an ambiguous date. The two former "unsupported" schedule and inventory cases now expect answers. A new `num` format checks hours and quantities. Future date tokens (`tomorrow`, `this_week.sunday`, `next_week.*`) are accepted for `get_schedule` values only. A new `expect.limitations` (regexes) checks that a data gap reached the user.
+- The thresholds from [breadth](breadth.md) are printed with every run, and `--gate` exits 1 on a miss: 0 authorization violations, 100% grounded answers, value correctness ≥95%, evidence coverage ≥95%.
+- Cases that need controlled data are deterministic `FakeProvider` tests in `tests/sous/test_breadth.py`: labor with partial and no timecards, draft vs published and overnight shifts, below-par units, missing par and never-counted items, inaccessible location (tool and orchestrator), failing timecards stream, partial tool failure, and injected item and employee names.
 
 ### Known limits (unchanged)
 

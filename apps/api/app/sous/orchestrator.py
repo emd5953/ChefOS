@@ -97,8 +97,9 @@ def _fmt_time(ts: datetime, tz: str) -> str:
 
 
 def limitations(results: list[ToolResult], tz: str) -> list[str]:
-    """One line per stale, failing or not connected stream touched, one per failed tool, and one
-    if item names were hidden."""
+    """One line per stale, failing or not connected stream touched, one per data gap a tool
+    reported (no timecards, unpublished dates, missing pars), one per failed tool, and one if
+    names were hidden."""
     seen: dict[str, tuple[str, datetime | None]] = {}
     for r in results:
         if not r.ok:
@@ -117,14 +118,17 @@ def limitations(results: list[ToolResult], tz: str) -> list[str]:
             lines.append(f"{label} data is {status} and has not synced yet.")
         else:
             lines.append(f"{label} data is {status}; last updated {_fmt_time(as_of, tz)}.")
+    for r in results:
+        if r.ok:
+            lines += [n for n in r.notes if n not in lines]
     lines += [
         f"Tool {r.tool} failed: {r.data.get('error', 'unknown error')}" for r in results if not r.ok
     ]
     hidden = sum(r.hidden_names for r in results if r.ok)
     if hidden:
         lines.append(
-            f"{hidden} item name(s) looked like instructions to an AI and were hidden. "
-            "Check these items in Square."
+            f"{hidden} name(s) looked like instructions to an AI and were hidden. "
+            "Check these names where they were entered (Square or ChefOS)."
         )
     return lines
 
@@ -176,6 +180,9 @@ def tool_label(name: str, args: dict[str, Any]) -> str:
         "get_top_items": f"Checked top items{span}",
         "get_today": "Checked today's sales so far",
         "get_data_freshness": "Checked how current the data is",
+        "get_labor_summary": f"Checked labor{span}",
+        "get_schedule": f"Checked the published schedule{span}",
+        "find_items_below_par": "Checked stock against par",
     }.get(name, f"Ran {name}")
 
 
@@ -191,9 +198,11 @@ async def _call_tool(
 ) -> tuple[ToolResult, ToolEvent]:
     with _tracer.start_as_current_span("sous.tool", context=parent) as span:
         t0 = time.perf_counter()
+        # Recheck the caller's location scope on every call; the tool refuses before querying.
+        allowed = await ctx.allowed_location_ids()
         # A session per tool call: no connection is held while the model is thinking.
         async with open_session() as db:
-            result = await tools.run_tool(name, args, db, ctx.org_id, loc, now)
+            result = await tools.run_tool(name, args, db, ctx.org_id, loc, now, allowed=allowed)
         ms = round((time.perf_counter() - t0) * 1000)
         span.set_attributes(
             {

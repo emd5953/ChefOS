@@ -29,13 +29,16 @@ async def service_call(conn: Connected, fn: str, *args: Any) -> Any:
         return await getattr(commerce, fn)(db, conn.org_id, loc, *args)
 
 
-def test_registry_has_the_five_v1_tools() -> None:
+def test_registry_has_the_v1_and_team_inventory_tools() -> None:
     assert TOOL_NAMES == (
         "get_sales_summary",
         "get_daily_sales",
         "get_top_items",
         "get_today",
         "get_data_freshness",
+        "get_labor_summary",
+        "get_schedule",
+        "find_items_below_par",
     )
 
 
