@@ -209,21 +209,28 @@ async def test_schedule_shows_published_shifts_only_with_overnight_and_unpublish
         published=[("Ana", at(fri, 17), at(fri, 23)), ("Ben", at(fri, 22), at(fri, 30))],
         draft_only=[("Cara", at(fri, 11), at(fri, 15))],
     )
-    # Today is 2026-03-07; the 9th starts a week with no published schedule.
+    # Up to 2 days lists individual shifts. Today is 2026-03-07.
+    two = await run(bare, clock, "get_schedule", {"from": "2026-03-06", "to": "2026-03-07"})
+    assert two.ok and two.data["shifts_shown"] == 2 and two.data["shifts_note"] is None
+    assert [s["employee"] for s in two.data["shifts"]] == ["Ana", "Ben"]  # Cara is draft only
+    ben = two.data["shifts"][1]
+    assert (ben["date"], ben["starts"], ben["ends"], ben["ends_next_day"], ben["paid_hours"]) == (
+        "2026-03-06", "10pm", "6am", True, 8.0,
+    )  # fmt: skip
+    assert two.data["shifts"][0]["ends_next_day"] is False
+
+    # Longer ranges return per-day and range totals only; the 9th starts an unpublished week.
     r = await run(bare, clock, "get_schedule", {"from": "2026-03-06", "to": "2026-03-09"})
     d = r.data
     assert r.ok and d["status"] == "published"
     assert d["shift_count"] == 2 and d["scheduled_hours"] == 14.0 and d["people_scheduled"] == 2
-    assert [s["employee"] for s in d["shifts"]] == ["Ana", "Ben"]  # Cara is draft only
-    ben = d["shifts"][1]
-    assert (ben["date"], ben["starts"], ben["ends"], ben["ends_next_day"], ben["paid_hours"]) == (
-        "2026-03-06", "10pm", "6am", True, 8.0,
-    )  # fmt: skip
-    assert d["shifts"][0]["ends_next_day"] is False
+    assert d["shifts"] == [] and d["shifts_shown"] == 0
+    assert "up to 2 days" in d["shifts_note"]
     assert d["unpublished_dates"] == ["2026-03-09"]
     assert d["draft_has_unpublished_changes"] is True
     days = {x["date"]: x for x in d["days"]}
-    assert days["2026-03-06"]["shifts"] == 2 and days["2026-03-07"]["shifts"] == 0
+    assert days["2026-03-06"]["shifts"] == 2 and days["2026-03-06"]["scheduled_hours"] == 14.0
+    assert days["2026-03-07"]["shifts"] == 0 and days["2026-03-07"]["scheduled_hours"] == 0
     assert days["2026-03-09"]["published"] is False
     assert "No schedule is published for 2026-03-09." in r.notes
     assert any("not published" in n for n in r.notes)

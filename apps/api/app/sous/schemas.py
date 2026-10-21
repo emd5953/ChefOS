@@ -245,8 +245,9 @@ class ScheduleFacts(BaseModel):
     scheduled_hours: float
     people_scheduled: int
     days: list[ScheduleDayFacts]
-    shifts: list[ScheduleShiftFacts]  # capped; see `shifts_shown`
+    shifts: list[ScheduleShiftFacts]  # ranges of up to 2 days only, capped; see `shifts_shown`
     shifts_shown: int
+    shifts_note: str | None = None  # why `shifts` is empty for a longer range
     unpublished_dates: list[date]
     draft_has_unpublished_changes: bool
     note: str | None = None

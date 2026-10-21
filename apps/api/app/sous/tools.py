@@ -50,6 +50,7 @@ MAX_LABOR_DAYS = 92
 MAX_SCHEDULE_DAYS = 14
 SCHEDULE_AHEAD_DAYS = 56  # the schedule tool may look this far past today
 MAX_SCHEDULE_SHIFTS = 60
+SHIFT_LIST_DAYS = 2  # longer ranges return per-day totals only, so answers stay totals
 MAX_PAR_ITEMS = 50
 LISTED_DATES = 31  # dates listed by name in a facts field
 
@@ -696,6 +697,7 @@ async def _schedule(
                 paid_hours=round(float(hours), 2),
             )
         )
+    listed = shifts if n <= SHIFT_LIST_DAYS else []
     unpublished = [d for d in dates if d not in covered]
     total_hours = round(float(sum(hours_by_day.values(), Decimal(0))), 2)
     facts = ScheduleFacts(
@@ -713,11 +715,16 @@ async def _schedule(
             )
             for d in dates
         ],
-        shifts=shifts[:MAX_SCHEDULE_SHIFTS],
-        shifts_shown=min(len(shifts), MAX_SCHEDULE_SHIFTS),
+        shifts=listed[:MAX_SCHEDULE_SHIFTS],
+        shifts_shown=min(len(listed), MAX_SCHEDULE_SHIFTS),
         unpublished_dates=unpublished,
         draft_has_unpublished_changes=changed,
     )
+    if n > SHIFT_LIST_DAYS and rows:
+        facts.shifts_note = (
+            f"Individual shifts are listed only for ranges of up to {SHIFT_LIST_DAYS} days. "
+            "Use the per-day and range totals."
+        )
     notes: list[str] = []
     if unpublished:
         facts.note = "No schedule is published for some dates; nobody is shown as working then."
@@ -729,8 +736,8 @@ async def _schedule(
             "The draft schedule has changes that are not published; Sous shows published "
             "shifts only."
         )
-    if len(shifts) > MAX_SCHEDULE_SHIFTS:
-        notes.append(f"Showing the first {MAX_SCHEDULE_SHIFTS} of {len(shifts)} shifts.")
+    if len(listed) > MAX_SCHEDULE_SHIFTS:
+        notes.append(f"Showing the first {MAX_SCHEDULE_SHIFTS} of {len(listed)} shifts.")
     as_of = max((s.published_at for s in published.values() if s.published_at), default=None)
     tag = f" ({args.from_.isoformat()} to {args.to.isoformat()})"
     evidence = [
@@ -920,8 +927,9 @@ TOOLS: dict[str, ToolDef] = {
         ToolDef(
             "get_schedule",
             "Published shifts for a date range of at most 14 days, past or up to 56 days ahead: "
-            "who works, position, start and end times (overnight shifts end the next day), "
-            "scheduled hours per day. Drafts are not shown. Use this for who is working.",
+            "shifts and scheduled hours per day and for the whole range. For ranges of up to 2 "
+            "days it also lists who works, position, start and end times (overnight shifts end "
+            "the next day). Drafts are not shown. Use this for who is working.",
             ScheduleArgs,
             _schedule,
         ),

@@ -265,7 +265,7 @@ event: error    data: { "status": int, "code": str, "detail": str }  # always la
 
 ## Team and Inventory reads (Phase 6, B1)
 
-**Status:** Built · 2026-10-21 · prompt `sous-prompt-6`
+**Status:** Built · 2026-10-21 · prompt `sous-prompt-7`
 
 ### Tools
 
@@ -274,13 +274,13 @@ The registry signatures above name `location_ids`. As with the v1 tools, that sc
 | Tool | Args (model-supplied) | Reads | Caps |
 | --- | --- | --- | --- |
 | `get_labor_summary` → `LaborFacts` | `from`, `to` | `commerce.service.daily` plus `daily_labor` row dates | 92 days, no future dates; day-by-day only for ≤14 days |
-| `get_schedule` → `ScheduleFacts` | `from`, `to` | `published_shifts` of published `schedules` | 14 days, up to 56 days ahead, 400 back; 60 shifts listed |
+| `get_schedule` → `ScheduleFacts` | `from`, `to` | `published_shifts` of published `schedules` | 14 days, up to 56 days ahead, 400 back; shifts listed only for ≤2 days, at most 60 |
 | `find_items_below_par` → `ItemFacts` | `limit?: 1..50` (default 25) | active `inventory_items` with this location's `inventory_pars` and `inventory_levels` | 50 items listed, 10 no-par names |
 
 The `*Facts` models live in `app/sous/schemas.py` and are dumped to JSON for the model, so the shape is typed and versioned with the prompt.
 
 - **Labor.** Actual paid hours and cost from timecards, labor % = cost / net sales (the `get_sales_summary` definition). `daily_labor` has a row only for days with timecards, so a day without one is reported as unknown (`labor_hours: null`), never zero. With no timecards at all, hours, cost and labor % are null. `scheduled_hours` is not used.
-- **Schedule.** Published shifts only; drafts are never shown. Each shift has the business date it starts on, local start and end times ("10pm"), `ends_next_day` for overnight shifts, and paid hours. Days not covered by a published week are listed in `unpublished_dates`. `draft_has_unpublished_changes` says the draft differs from what employees see, without showing it. Costs and rates are not returned.
+- **Schedule.** Published shifts only; drafts are never shown. Every range returns per-day totals (shifts, scheduled hours) and the range total. Individual shifts are listed only for ranges of up to 2 days; longer ranges return an empty `shifts` and a `shifts_note`, so the model reports totals instead of tables. Each listed shift has the business date it starts on, local start and end times ("10pm"), `ends_next_day` for overnight shifts, and paid hours. Days not covered by a published week are listed in `unpublished_dates`. `draft_has_unpublished_changes` says the draft differs from what employees see, without showing it. Costs and rates are not returned.
 - **Below par.** Below par means on hand < par. Items are ordered most depleted first (share of par on hand). Quantities are in the item's base unit (`g`, `ml`, `ea`). An item with a par but no stock record reads 0 and is flagged `never_counted`. Items without a par are counted and named, not checked.
 - **Text.** Employee, position, station, item and category names go through the same instruction filter as menu item names and show as `[name hidden]` when they read as instructions.
 
@@ -292,6 +292,8 @@ The `*Facts` models live in `app/sous/schemas.py` and are dumped to JSON for the
 ### Prompt (`sous-prompt-6`)
 
 Adds labor-hours, scheduled-hours and below-par definitions, tool-choice guidance, and future date references (tomorrow, this week Monday to Sunday, next week) marked schedule-only. Schedules and inventory are no longer listed as unsupported. Editing schedules, placing purchase orders, waste and pay rates still are. Stock and par questions need no period.
+
+`sous-prompt-7` (F2) extends rule 4: labor and schedule questions without a period (hours worked, labor cost, labor %, scheduled hours) clarify, as sales ones do.
 
 ### Evaluation
 
