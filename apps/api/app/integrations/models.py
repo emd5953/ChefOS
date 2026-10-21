@@ -11,6 +11,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     LargeBinary,
@@ -179,6 +180,28 @@ class RawRecord(Base):
     )
     normalizer_version: Mapped[str | None] = mapped_column(String, default=None)
     normalize_error: Mapped[str | None] = mapped_column(Text, default=None)
+
+
+class PushIdempotency(Base):
+    __tablename__ = "push_idempotency"
+    __table_args__ = (
+        UniqueConstraint("org_id", "idempotency_key", name="uq_push_idempotency_org_key"),
+        ForeignKeyConstraint(
+            ["org_id", "api_key_id"],
+            ["api_keys.org_id", "api_keys.id"],
+            name="fk_push_idempotency_api_key",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=new_id)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
+    api_key_id: Mapped[uuid.UUID] = mapped_column()
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    request_hash: Mapped[str] = mapped_column(String)
+    response: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, server_default=_NOW
+    )
 
 
 class WebhookEvent(Base):
