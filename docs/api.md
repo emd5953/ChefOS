@@ -395,6 +395,39 @@ Body: `{ question: string /* 1-500 chars */; location_id: string; history?: Arra
 
 `200 SousStatus`. Pings the provider (2 s timeout). The web app uses it to show whether Sous is available.
 
+### `GET /v1/sous/briefing?location_id&date`
+
+Daily briefing (SOUS-2). Deterministic: built per request from the Commerce read models, the published schedule and inventory levels; it never calls the model, so it works when Sous is unavailable. Nothing is stored.
+
+```ts
+type SectionStatus = "ok" | "no_data" | "unavailable"   // unavailable: the source failed or isn't connected
+type Section = { status: SectionStatus; source: string /* "commerce.daily" | "team.published_schedule" | "inventory.levels" */;
+                 business_date: string | null; as_of: string | null; note: string | null }
+type Briefing = {
+  location_id: string; location_name: string; timezone: string;
+  business_date: string;            // the briefing's day: staffing is for this date
+  results_date: string;             // business_date − 1: sales and labor
+  generated_at: string; currency: "USD";
+  highlights: string[];             // plain sentences, one per available section
+  sales: Section & { net_sales; orders; avg_check; compare_date /* same weekday a week earlier */;
+                     compare_net_sales; net_sales_change_pct };                     // null unless ok
+  labor: Section & { actual_hours; actual_cost; labor_pct };                        // null unless ok
+  staffing: Section & { published_at; shifts; scheduled_hours; unassigned_shifts; first_start; last_end;
+                        by_position: Record<string, number>;
+                        shift_list: Array<{ employee_name: string | null; position_name; starts_at; ends_at; paid_hours }> /* max 50 */ };
+  stock: Section & { below_par_count; items_without_par;
+                     items: Array<{ item_id; name; category; base_unit; on_hand; par; shortfall; as_of }> /* max 20, worst first */ };
+  evidence: Evidence[];             // source is the service name above
+  freshness: Array<{ stream; data_as_of; status }>;   // orders, timecards, catalog, team_members
+  limitations: string[];            // stale/failing streams, missing or unavailable sections
+  unavailable: string[] }           // sources that failed or aren't connected
+```
+
+- `date` defaults to today's business date at the location (its timezone and day start), so results cover the last completed business day. `date` may be up to 14 days ahead or 400 back (`422` otherwise).
+- Numbers come straight from `GET /v1/commerce/daily`, the published schedule (drafts never count), and the same below-par rule as `GET /v1/inventory/items`. Stock is current state, not as of `date`.
+- No timecards is `labor.status: "no_data"` with null figures, never zero labor. A section whose source fails is `unavailable` and named in `unavailable`; the other sections still return.
+- Staff only (`403` for employees); a `location_id` outside the caller's scope is `404`.
+
 ## Dev-only (`ENV=local`)
 
 | Method | Path | Response |

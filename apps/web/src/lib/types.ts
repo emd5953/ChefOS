@@ -219,6 +219,68 @@ export type SousTurn = { role: "user" | "assistant"; content: string };
 
 export type SousAskInput = { question: string; location_id: string; history?: SousTurn[] };
 
+// GET /v1/sous/briefing: deterministic, no model. `unavailable` = the source failed or isn't
+// connected; `no_data` = it answered with nothing.
+export type BriefingSectionStatus = "ok" | "no_data" | "unavailable";
+type BriefingSection = {
+  status: BriefingSectionStatus;
+  source: string;
+  business_date: string | null;
+  as_of: string | null;
+  note: string | null;
+};
+export type BriefingShift = {
+  employee_name: string | null;
+  position_name: string;
+  starts_at: string;
+  ends_at: string;
+  paid_hours: number;
+};
+export type BriefingItem = {
+  item_id: string;
+  name: string;
+  category: string;
+  base_unit: string;
+  on_hand: number;
+  par: number;
+  shortfall: number;
+  as_of: string | null;
+};
+export type Briefing = {
+  location_id: string;
+  location_name: string;
+  timezone: string;
+  business_date: string;
+  results_date: string;
+  generated_at: string;
+  currency: "USD";
+  highlights: string[];
+  sales: BriefingSection & {
+    net_sales: number | null;
+    orders: number | null;
+    avg_check: number | null;
+    compare_date: string | null;
+    compare_net_sales: number | null;
+    net_sales_change_pct: number | null;
+  };
+  labor: BriefingSection & { actual_hours: number | null; actual_cost: number | null; labor_pct: number | null };
+  staffing: BriefingSection & {
+    published_at: string | null;
+    shifts: number | null;
+    scheduled_hours: number | null;
+    unassigned_shifts: number | null;
+    first_start: string | null;
+    last_end: string | null;
+    by_position: Record<string, number>;
+    shift_list: BriefingShift[];
+  };
+  stock: BriefingSection & { below_par_count: number | null; items: BriefingItem[]; items_without_par: number | null };
+  evidence: SousEvidence[];
+  freshness: Array<Omit<Freshness, "location_id">>;
+  limitations: string[];
+  unavailable: string[];
+};
+
 // ---- Team ----
 export type Position = { id: string; name: string; color: string; archived_at: string | null };
 export type Station = { id: string; location_id: string; name: string; archived_at: string | null };

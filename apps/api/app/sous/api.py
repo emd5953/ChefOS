@@ -4,11 +4,11 @@ import time
 import uuid
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
 from app.commerce import service
@@ -18,9 +18,11 @@ from app.identity.models import Location
 from app.integrations.providers.square.business_date import business_date
 from app.security.sessions import AuthContext, StaffDep
 from app.sous import fallback, orchestrator, prompt
+from app.sous import service as briefings
 from app.sous.llm import LLMProvider, get_provider, sous_unavailable
 from app.sous.schemas import (
     AskIn,
+    BriefingOut,
     ErrorEvent,
     Heartbeat,
     SousAnswer,
@@ -133,3 +135,16 @@ async def status(_: StaffDep, provider: Provider) -> StatusOut:
         prompt_version=prompt.PROMPT_VERSION,
         breaker=provider.breaker.state if provider.breaker else "closed",
     )
+
+
+@router.get("/briefing", response_model=BriefingOut)
+async def briefing(
+    ctx: StaffDep,
+    location_id: Annotated[uuid.UUID, Query()],
+    day: Annotated[date | None, Query(alias="date")] = None,
+) -> BriefingOut:
+    """Deterministic daily briefing (SOUS-2). Never calls the model, so it works offline."""
+    allowed = await ctx.allowed_location_ids()
+    async with scoped_session(ctx.org_id) as db:
+        loc = await service.get_location(db, allowed, location_id)
+        return await briefings.briefing(db, ctx.org_id, loc, day)
