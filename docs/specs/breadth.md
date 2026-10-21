@@ -1,6 +1,6 @@
 # Breadth: Phase 5 completion and Phase 6
 
-**Status:** Proposed · **Last updated:** 2026-10-20  
+**Status:** Done (B1–B6 merged) · **Last updated:** 2026-10-21  
 **Related:** [Roadmap](../roadmap.md), [PRD](../prd.md), [Sous](sous.md), [Team](team.md), [Inventory](inventory.md), [Integration layer](integration-layer.md), [Architecture](../architecture.md)
 
 ## Problem

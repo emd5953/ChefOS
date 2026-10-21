@@ -1,6 +1,6 @@
 # Roadmap
 
-**Last updated:** 2026-10-20
+**Last updated:** 2026-10-21
 **Related:** [PRD](prd.md), [ADR 0001: Integration-first](adr/0001-integration-first.md)
 
 The sequence is integration-first. Module features are built on real imported data, not seeded records. Each phase has an exit criterion. Phases overlap where noted.
@@ -12,11 +12,10 @@ As of 2026-10-20:
 - **Phase 0:** done.
 - **Phase 1:** M1–M5 done in simulated mode. Real-sandbox mode is untested.
 - **Phase 2:** done. Commerce views built, marketing site moved into `apps/web`, prototype deleted.
-- **Phase 5:** Sous read-only built ahead of order over Commerce data (milestones 1–4). The eval set passes 39/40 on qwen3:8b. Team and Inventory tools (labor, published schedule, below par) added in Phase 6 B1.
+- **Phase 5:** done. Sous read-only over Commerce, Team (labor, published schedule) and Inventory (below par). The 53-case eval passes 50/53 on qwen3:8b and meets all thresholds (0 authorization violations, 100% grounded, 95.5% value correctness, 97.4% evidence coverage).
 - **Phase 3:** done ([spec](specs/team.md), T1–T5). Employees from Square, logins by invitation, schedule builder with forecast and projected labor %, publish with change alerts, availability and time off with approvals, and an employee mobile view at `/my` ([ADR 0004](adr/0004-mobile-as-responsive-web.md)). Seeded by `make demo`.
 - **Phase 4:** done ([spec](specs/inventory.md)). INV-1 to INV-4 and MOB-3: catalog, counts with exceptions, purchasing and receiving, recipes with plate cost, phone-sized count and receive.
-- **Phase 6:** not started.
-- **Phase 6 · TEAM-6 clock-in alerts:** built ([spec](specs/breadth.md), B6). Late/missed alerts to managers after each sync, attendance view at Team → Attendance, `daily_labor.scheduled_hours` filled from published shifts.
+- **Phase 6:** selected scope done ([spec](specs/breadth.md), B1–B6): Sous Team/Inventory tools, daily briefing (SOUS-2), product mix (COM-4), waste (INV-5), push API with API keys (INT-6), clock-in alerts and attendance (TEAM-6). Still deferred: Toast connector, payroll export, shift trades and open shifts, Sous draft-and-approve, supplier/invoice connectors, food cost variance.
 - **Prototype workspace:** deleted from `main`. UX reference at tag `prototype-v0`; run it with `git worktree add ../chefos-prototype prototype-v0 && cd ../chefos-prototype && python3 server.py`.
 
 ## Phase 0: Platform foundation
