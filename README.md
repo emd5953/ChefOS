@@ -14,7 +14,7 @@ Modules: **Team**, **Commerce**, **Inventory**. Shared capabilities: **Integrati
 | Commerce (Phase 2) | Built: overview, sales, menu items, freshness. Phase 2 is complete |
 | Sous (read-only) | Built: local model via Ollama, 5 Commerce tools, grounded answers, 40-case eval (`make sous-eval`) |
 | Team (Phase 3) | Built: employees from Square, invitations and roles, schedule builder with forecast and projected labor %, publish with change alerts, availability and time off, employee mobile view at `/my` ([spec](docs/specs/team.md), [ADR 0004](docs/adr/0004-mobile-as-responsive-web.md)) |
-| Inventory (Phase 4) | Done: catalog, counts, purchasing, receiving, recipes, plate costs, and mobile workflows ([spec](docs/specs/inventory.md)) |
+| Inventory (Phase 4 + INV-5) | Done: catalog, counts, purchasing, receiving, recipes, plate costs, mobile workflows, audited waste entries ([spec](docs/specs/inventory.md)) |
 | Marketing site | Served by the web app at `/` |
 
 ## Run the demo

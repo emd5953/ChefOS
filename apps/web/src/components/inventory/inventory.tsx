@@ -13,6 +13,7 @@ import { Input, Select } from "@/components/ui/field";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { CountSessionHistory } from "@/components/inventory/management";
+import { WasteLog } from "@/components/inventory/waste";
 
 type StockItem = { id: string; name: string; category: string; base_unit: string; on_hand_base_quantity: number; par_base_quantity: number | null; below_par: boolean; last_received_cost_minor: number | null; cost_as_of: string | null };
 
@@ -51,6 +52,7 @@ export function Inventory() {
       </div>
       <CatalogSetup locationId={current?.id} />
       <CountSessionHistory />
+      <WasteLog locationId={current?.id} />
       <Card>
         <CardHeader overline="Catalog" title="Add an inventory item" />
         <form className="mt-4 grid gap-3 sm:grid-cols-[1.4fr_1fr_1fr_auto] sm:items-end" onSubmit={submitItem}>

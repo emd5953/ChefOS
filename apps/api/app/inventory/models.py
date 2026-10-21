@@ -231,6 +231,28 @@ Table(
     ForeignKeyConstraint(["org_id", "item_id"], ["inventory_items.org_id", "inventory_items.id"]),
 )
 Table(
+    "waste_entries",
+    m,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("org_id", UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False),
+    Column("location_id", UUID(as_uuid=True), nullable=False),
+    Column("item_id", UUID(as_uuid=True), nullable=False),
+    Column("quantity_base", Numeric(18, 6), nullable=False),
+    Column("unit_cost_minor", Numeric(18, 6)),
+    Column("reason", String, nullable=False),
+    Column("station_id", UUID(as_uuid=True)),
+    Column("shift_id", UUID(as_uuid=True)),
+    Column("business_date", Date, nullable=False),
+    Column("idempotency_key", String(128), nullable=False),
+    Column("created_by", UUID(as_uuid=True), ForeignKey("users.id"), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    UniqueConstraint("org_id", "id", name="uq_waste_entries_org_id"),
+    UniqueConstraint("org_id", "idempotency_key", name="uq_waste_entries_org_idempotency_key"),
+    ForeignKeyConstraint(["org_id", "location_id"], ["locations.org_id", "locations.id"]),
+    ForeignKeyConstraint(["org_id", "item_id"], ["inventory_items.org_id", "inventory_items.id"]),
+    CheckConstraint("quantity_base > 0", name="quantity_base_positive"),
+)
+Table(
     "purchase_orders",
     m,
     Column("id", UUID(as_uuid=True), primary_key=True),

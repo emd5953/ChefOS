@@ -213,6 +213,31 @@ class ParOut(Out):
     location_id: uuid.UUID
     item_id: uuid.UUID
     par_base_quantity: Decimal
+
+
+class WasteCreate(BaseModel):
+    location_id: uuid.UUID
+    item_id: uuid.UUID
+    quantity: Quantity
+    unit: str | None = None
+    reason: Reason
+    idempotency_key: Annotated[str, Field(min_length=1, max_length=128)]
+
+
+class WasteOut(Out):
+    id: uuid.UUID
+    location_id: uuid.UUID
+    item_id: uuid.UUID
+    item_name: str
+    base_unit: str
+    quantity_base: Decimal
+    unit_cost_minor: int | None
+    reason: str
+    station_id: uuid.UUID | None
+    shift_id: uuid.UUID | None
+    business_date: date
+    created_by: uuid.UUID
+    created_at: datetime
     updated_at: datetime
 
 
