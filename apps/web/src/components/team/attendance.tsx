@@ -152,6 +152,8 @@ function WeekStrip({ data, day, onPick }: { data: AttendanceResponse; day: strin
             <p className={cn("mt-1 text-[11px] font-semibold", problems ? "text-warning" : "text-foreground/45")}>
               {problems
                 ? [d.counts.late && `${d.counts.late} late`, d.counts.missed && `${d.counts.missed} missed`].filter(Boolean).join(" · ")
+              : d.counts.in_progress
+                ? `${d.counts.in_progress} in progress`
                 : d.shifts.length
                   ? "No exceptions"
                   : "No shifts"}
@@ -168,7 +170,7 @@ function DayDetail({ data, d, tz }: { data: AttendanceResponse; d: AttendanceDay
     <>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Tile label="Scheduled hours" value={formatHours(d.scheduled_hours)} note="Published shifts, open ones included" />
-        <Tile label="Actual hours" value={formatHours(d.actual_hours)} note="Closed timecards; open ones count at clock-out" />
+        <Tile label="Actual hours" value={formatHours(d.actual_hours)} note="Closed timecards plus running time for open punches" />
         <Tile label="Late" value={String(d.counts.late)} warn={d.counts.late > 0} note={`No clock-in ${data.grace_minutes} min after start`} />
         <Tile label="Missed" value={String(d.counts.missed)} warn={d.counts.missed > 0} note="No clock-in by the end of the shift" />
       </div>
@@ -235,6 +237,7 @@ const STATUS: Record<AttendanceStatus, { label: string; tone: Tone }> = {
   missed: { label: "Missed", tone: "danger" },
   upcoming: { label: "Upcoming", tone: "neutral" },
   awaiting_data: { label: "Awaiting timecards", tone: "neutral" },
+  in_progress: { label: "In progress", tone: "neutral" },
 };
 
 function ShiftRow({ s, tz }: { s: AttendanceShift; tz: string }) {
@@ -252,7 +255,7 @@ function ShiftRow({ s, tz }: { s: AttendanceShift; tz: string }) {
         {s.clock_in ? `${formatClock(s.clock_in, tz)} – ${s.clock_out ? formatClock(s.clock_out, tz) : "on the clock"}` : "—"}
       </td>
       <td className={cn(cell, "text-right tabular")}>
-        <span className="font-semibold">{open ? "—" : s.actual_hours.toFixed(1)}</span>
+        <span className="font-semibold">{s.actual_hours.toFixed(1)}{open ? " running" : ""}</span>
         <span className="text-foreground/50"> / {s.scheduled_hours.toFixed(1)} h</span>
       </td>
       <td className={cell}>

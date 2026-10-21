@@ -588,8 +588,9 @@ class Decision(BaseModel):
 
 # upcoming: not yet due; awaiting_data: due, but timecards are not imported that far yet (or the
 # location has no timecard source); on_time / late: clocked in by / after start + grace;
-# late without a clock-in: due and still none; missed: none by the shift's end.
-AttendanceStatus = Literal["upcoming", "awaiting_data", "on_time", "late", "missed"]
+# late without a clock-in: due and still none; missed: none by the shift's end; in_progress:
+# clocked in without a clock-out, with hours shown as running time through import as-of.
+AttendanceStatus = Literal["upcoming", "awaiting_data", "on_time", "late", "missed", "in_progress"]
 
 
 class AttendanceShift(BaseModel):
@@ -625,6 +626,7 @@ class AttendanceCounts(BaseModel):
     missed: int = 0
     upcoming: int = 0
     awaiting_data: int = 0
+    in_progress: int = 0
 
 
 class AttendanceDay(BaseModel):

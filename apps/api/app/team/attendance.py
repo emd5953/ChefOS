@@ -4,6 +4,8 @@ A shift with no clock-in `GRACE` after its start is *late*; one with none by its
 *missed*. Statuses are judged as of the instant timecards are imported through (the location's
 `timecards` stream `data_as_of`, capped at now), never wall-clock time alone, so a sync lag or an
 outage cannot read as a no-show. A location with no timecard source is never judged.
+An open punch's hours are running time through that same import as-of instant; breaks are
+unknown until the imported timecard closes.
 
 Detection runs after every ConnectionSync pass (app.workflows.team): that pass is both the
 schedule that lets time move a shift from upcoming to late and the import that can clear it.
@@ -185,8 +187,16 @@ async def _positions(db: AsyncSession, ids: set[uuid.UUID]) -> dict[uuid.UUID, P
     return {p.id: p for p in await db.scalars(select(Position).where(Position.id.in_(ids)))}
 
 
-def _hours(punches: list[Punch]) -> float:
-    return round(float(sum((p.paid_hours for p in punches), Decimal(0))), 2)
+def _hours(punches: list[Punch], as_of: datetime | None = None) -> float:
+    """Use paid hours for closed punches and running time through as-of for open ones."""
+    total = Decimal(0)
+    for punch in punches:
+        if punch.clock_out is None:
+            if as_of is not None and as_of > punch.clock_in:
+                total += Decimal(str((as_of - punch.clock_in).total_seconds())) / Decimal(3600)
+        else:
+            total += punch.paid_hours
+    return round(float(total), 2)
 
 
 # ---------------------------------------------------------------- the attendance view
@@ -239,6 +249,9 @@ async def attendance(
         clock_in = ps[0].clock_in if ps else None
         clock_out = None if not ps or any(p.clock_out is None for p in ps) else ps[-1].clock_out
         status, late = judge(s.starts_at, s.ends_at, clock_in, now, as_of)
+        # Still clocked in: a late arrival stays late; otherwise the shift is running.
+        if status == "on_time" and any(p.clock_out is None for p in ps):
+            status = "in_progress"
         pos = positions[s.position_id]
         by_day[s.business_date].append(
             AttendanceShift(
@@ -255,7 +268,7 @@ async def attendance(
                 ),
                 clock_in=clock_in,
                 clock_out=clock_out,
-                actual_hours=_hours(ps),
+                actual_hours=_hours(ps, as_of),
                 status=status,
                 minutes_late=late,
             )
@@ -282,7 +295,7 @@ async def attendance(
                     ),
                     2,
                 ),
-                actual_hours=_hours(day_punches),
+                actual_hours=_hours(day_punches, as_of),
                 counts=counts,
                 shifts=rows,
                 unscheduled=[
@@ -292,7 +305,7 @@ async def attendance(
                         employee_name=names.get(p.staff_member_id) if p.staff_member_id else None,
                         clock_in=p.clock_in,
                         clock_out=p.clock_out,
-                        actual_hours=_hours([p]),
+                        actual_hours=_hours([p], as_of),
                     )
                     for p in day_punches
                     if p.id not in used
