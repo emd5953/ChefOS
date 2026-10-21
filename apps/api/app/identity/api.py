@@ -4,7 +4,12 @@ from fastapi import APIRouter, Request, Response
 from sqlalchemy import select
 
 from app.identity import service
+from app.identity.models import ApiKey
 from app.identity.schemas import (
+    ApiKeyCreate,
+    ApiKeyCreated,
+    ApiKeyList,
+    ApiKeyOut,
     LocationCreate,
     LocationList,
     LocationOut,
@@ -135,4 +140,28 @@ async def archive_location(location_id: uuid.UUID, ctx: AuthDep, db: OrgSession)
     require_role(ctx, _ADMINS)
     return LocationOut.model_validate(
         await service.archive_location(db, ctx.org_id, ctx.user_id, location_id)
+    )
+
+
+@router.post("/api-keys", status_code=201, response_model=ApiKeyCreated)
+async def create_api_key(body: ApiKeyCreate, ctx: AuthDep, db: OrgSession) -> ApiKeyCreated:
+    require_role(ctx, _ADMINS)
+    row, secret = await service.create_api_key(
+        db, ctx.org_id, ctx.user_id, list(body.scopes), body.location_id, body.expires_at
+    )
+    return ApiKeyCreated(**ApiKeyOut.model_validate(row).model_dump(), secret=secret)
+
+
+@router.get("/api-keys", response_model=ApiKeyList)
+async def list_api_keys(ctx: AuthDep, db: OrgSession) -> ApiKeyList:
+    require_role(ctx, _ADMINS)
+    rows = await db.scalars(select(ApiKey).order_by(ApiKey.created_at.desc()))
+    return ApiKeyList(data=[ApiKeyOut.model_validate(row) for row in rows])
+
+
+@router.delete("/api-keys/{key_id}", response_model=ApiKeyOut)
+async def delete_api_key(key_id: uuid.UUID, ctx: AuthDep, db: OrgSession) -> ApiKeyOut:
+    require_role(ctx, _ADMINS)
+    return ApiKeyOut.model_validate(
+        await service.revoke_api_key(db, ctx.org_id, ctx.user_id, key_id)
     )

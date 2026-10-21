@@ -2,10 +2,18 @@ import re
 import uuid
 from datetime import datetime, time
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Literal
 from zoneinfo import available_timezones
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_serializer, field_validator
+from pydantic import (
+    AfterValidator,
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+)
 
 from app.security.passwords import validate_password
 
@@ -116,6 +124,34 @@ class SignupOut(SessionOut):
 
 class LocationList(BaseModel):
     data: list[LocationOut]
+
+
+ApiKeyScope = Literal["orders:write", "daily_sales:write"]
+
+
+class ApiKeyCreate(BaseModel):
+    scopes: Annotated[list[ApiKeyScope], Field(min_length=1, max_length=2)]
+    location_id: uuid.UUID | None = None  # None: any active location in the org
+    expires_at: AwareDatetime | None = None
+
+
+class ApiKeyOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    prefix: str
+    scopes: list[str]
+    location_id: uuid.UUID | None
+    created_at: datetime
+    expires_at: datetime | None
+    revoked_at: datetime | None
+
+
+class ApiKeyCreated(ApiKeyOut):
+    secret: str
+
+
+class ApiKeyList(BaseModel):
+    data: list[ApiKeyOut]
 
 
 class OrgUpdate(BaseModel):

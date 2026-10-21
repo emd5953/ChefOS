@@ -114,6 +114,20 @@ Password minimum is 12 characters. `timezone` is an IANA name.
 | POST | `/v1/integrations/mapping-issues/{id}/resolve` | `{ entity_id }` or `{ ignore: true }` | `200 MappingIssue` (mapping backfills existing rows; 409 if already mapped) |
 | POST | `/v1/webhooks/square` | Square webhook | `200`. Unauthenticated, HMAC-verified (sandbox mode only) |
 
+### Push sales
+
+Owners and admins manage API keys; create and revoke are audited. The secret (`chef_` + 256 random bits) is returned once and stored only as a SHA-256 hash. A key has explicit scopes, an optional location binding (unbound keys may push for any active location in the org) and an optional `expires_at`. Push requests send `Authorization: Bearer <key>` and an `Idempotency-Key` (1-128 printable ASCII). The org always comes from the key, never the payload. Revoked, expired or unknown keys get `401`; a missing scope `403`; a location outside the key's binding or org `404`.
+
+| Method | Path | Body | Response |
+| --- | --- | --- | --- |
+| POST | `/v1/api-keys` | `{ scopes: ("orders:write"\|"daily_sales:write")[], location_id?, expires_at? }` | `201 ApiKey & { secret }` (secret shown once) |
+| GET | `/v1/api-keys` | none | `200 { data: ApiKey[] }` (never includes secret or hash) |
+| DELETE | `/v1/api-keys/{id}` | none | `200 ApiKey` (revokes) |
+| POST | `/v1/ingest/orders` | `{ location_id, records: [{ id, closed_at, net_sales, orders?, currency? }] }` | `200 { accepted, applied, location_id, freshness }` |
+| POST | `/v1/ingest/daily-sales` | `{ location_id, totals: [{ business_date, net_sales, orders?, currency? }] }` | `200 { accepted, applied, location_id, freshness }` |
+
+Totals land through the shared pipeline as unitemized tickets (they appear as unmapped sales in item mix) and refresh the location's `orders` freshness. `net_sales` is integer minor units (0 to 10^11). `closed_at` is an ISO timestamp with offset and not in the future; `business_date` is a date in the location's business calendar, not after today. `id` matches `[A-Za-z0-9._-]+`; ids and dates are unique per batch, and a batch uses one ISO currency matching the location's existing sales. Batches cap at 500 order records or 400 daily totals and 5,000 expanded orders. Re-pushing an order id or date replaces it. Reusing an `Idempotency-Key` with the same endpoint, location and body returns the original response; anything else is `409`. Push is refused (`409`) for a location fed by a live connector, and a Square location cannot be linked to a push-fed location.
+
 **Square mode.** `SQUARE_MODE=fake` (default) uses a simulated Square sandbox. `authorize_url` points at the API's own `/v1/integrations/square/fake-consent?state=…`, which redirects straight to the callback, and data comes from a deterministic generator in Square's payload shapes. `SQUARE_MODE=sandbox` uses the real Square sandbox with `SQUARE_APP_ID`/`SQUARE_APP_SECRET`/`SQUARE_WEBHOOK_SIGNATURE_KEY`.
 
 **Single-location auto-link.** If the org has exactly one location and Square reports exactly one, they're linked automatically on connect, and sync and backfill start immediately.

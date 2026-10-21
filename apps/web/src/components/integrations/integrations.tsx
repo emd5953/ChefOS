@@ -14,6 +14,7 @@ import { api, errorMessage } from "@/lib/api";
 import { canManage, useSession } from "@/lib/auth";
 import { useConnections, keys } from "@/lib/queries";
 import { ConnectionView } from "./connection-view";
+import { ApiKeysCard } from "./push-keys";
 
 const ERROR_COPY: Record<string, string> = {
   access_denied: "Square access was declined, so nothing was connected.",
@@ -73,6 +74,7 @@ export function Integrations() {
       ) : (
         <ConnectSquareCard />
       )}
+      <ApiKeysCard />
     </>
   );
 }

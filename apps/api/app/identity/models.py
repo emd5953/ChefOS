@@ -1,7 +1,17 @@
 import uuid
 from datetime import UTC, datetime, time
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, String, Time, UniqueConstraint, text
+from sqlalchemy import (
+    ARRAY,
+    CheckConstraint,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    String,
+    Time,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import DateTime
 
@@ -90,3 +100,37 @@ class LocationAccess(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), primary_key=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), primary_key=True)
     location_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("locations.id"), primary_key=True)
+
+
+class ApiKey(Base):
+    """A bearer credential for push ingestion. Only the SHA-256 of the secret is stored."""
+
+    __tablename__ = "api_keys"
+    __table_args__ = (
+        CheckConstraint(
+            "cardinality(scopes) >= 1 "
+            "AND scopes <@ ARRAY['orders:write', 'daily_sales:write']::varchar[]",
+            name="scopes",
+        ),
+        Index("ix_api_keys_org_id", "org_id"),
+        UniqueConstraint("key_hash", name="uq_api_keys_key_hash"),
+        UniqueConstraint("org_id", "id", name="uq_api_keys_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "location_id"],
+            ["locations.org_id", "locations.id"],
+            name="fk_api_keys_org_location",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=new_id)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
+    key_hash: Mapped[str] = mapped_column(String)
+    prefix: Mapped[str] = mapped_column(String(16))
+    scopes: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    location_id: Mapped[uuid.UUID | None] = mapped_column(default=None)
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, server_default=_NOW
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

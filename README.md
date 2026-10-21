@@ -16,6 +16,7 @@ Modules: **Team**, **Commerce**, **Inventory**. Shared capabilities: **Integrati
 | Daily briefing (SOUS-2) | Built: deterministic briefing card on `/app/sous` (yesterday's sales and labor, today's published staffing, items below par) with per-stream freshness; works with the model offline |
 | Team (Phase 3) | Built: employees from Square, invitations and roles, schedule builder with forecast and projected labor %, publish with change alerts, availability and time off, employee mobile view at `/my` ([spec](docs/specs/team.md), [ADR 0004](docs/adr/0004-mobile-as-responsive-web.md)) |
 | Inventory (Phase 4 + INV-5) | Done: catalog, counts, purchasing, receiving, recipes, plate costs, mobile workflows, audited waste entries ([spec](docs/specs/inventory.md)) |
+| External sales push (INT-6) | Built: scoped, expiring API keys (hashed, shown once), idempotent totals ingestion through the shared integration pipeline |
 | Marketing site | Served by the web app at `/` |
 
 ## Run the demo

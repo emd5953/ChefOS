@@ -79,7 +79,10 @@ async def callback(
 async def list_connections(ctx: StaffDep, db: OrgSession) -> ConnectionList:
     rows = await db.scalars(
         select(IntegrationConnection)
-        .where(IntegrationConnection.status != "disconnected")
+        .where(
+            IntegrationConnection.status != "disconnected",
+            IntegrationConnection.provider == service.PROVIDER,  # push is managed by API keys
+        )
         .order_by(IntegrationConnection.created_at)
     )
     return ConnectionList(data=[await service.connection_out(db, c) for c in rows])

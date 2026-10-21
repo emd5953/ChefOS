@@ -4,6 +4,8 @@ This module (with app.security.sessions) is allowed to use `unscoped_session`: s
 login run before an org scope exists.
 """
 
+import hashlib
+import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -15,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit import service as audit
 from app.db import set_scope, unscoped_session
 from app.errors import ProblemError, not_found, validation_error
-from app.identity.models import Location, Membership, Organization, User
+from app.identity.models import ApiKey, Location, Membership, Organization, User
 from app.identity.schemas import (
     LocationCreate,
     LocationUpdate,
@@ -28,6 +30,79 @@ from app.security.models import SessionRecord
 from app.security.sessions import create_session
 
 _BAD_LOGIN = ProblemError(401, "unauthenticated", "Invalid email or password")
+
+
+API_KEY_PREFIX = "chef_"
+
+
+def hash_api_key(secret: str) -> str:
+    """Keys carry 256 random bits, so an unsalted SHA-256 is a safe at-rest form and an indexed
+    equality lookup on it leaks nothing useful through timing."""
+    return hashlib.sha256(secret.encode()).hexdigest()
+
+
+async def create_api_key(
+    db: AsyncSession,
+    org_id: uuid.UUID,
+    actor: uuid.UUID,
+    scopes: list[str],
+    location_id: uuid.UUID | None,
+    expires_at: datetime | None,
+) -> tuple[ApiKey, str]:
+    """Issue a key. The plaintext secret is returned once and never stored or logged."""
+    if expires_at is not None and expires_at <= datetime.now(UTC):
+        raise validation_error({"expires_at": "Must be in the future"})
+    if location_id is not None:
+        loc = await db.get(Location, location_id)
+        if loc is None or loc.archived_at is not None:
+            raise not_found("Location not found")
+    secret = API_KEY_PREFIX + secrets.token_urlsafe(32)  # 256 bits
+    row = ApiKey(
+        org_id=org_id,
+        key_hash=hash_api_key(secret),
+        prefix=secret[:12],
+        scopes=sorted(set(scopes)),
+        location_id=location_id,
+        created_by=actor,
+        expires_at=expires_at,
+    )
+    db.add(row)
+    await db.flush()
+    await audit.record(
+        db,
+        org_id=org_id,
+        actor_user_id=actor,
+        entity_type="api_key",
+        entity_id=row.id,
+        action="api_key.create",
+        location_id=location_id,
+        details={
+            "prefix": row.prefix,
+            "scopes": row.scopes,
+            "expires_at": expires_at.isoformat() if expires_at else None,
+        },
+    )
+    return row, secret
+
+
+async def revoke_api_key(
+    db: AsyncSession, org_id: uuid.UUID, actor: uuid.UUID, key_id: uuid.UUID
+) -> ApiKey:
+    row = await db.scalar(select(ApiKey).where(ApiKey.org_id == org_id, ApiKey.id == key_id))
+    if row is None:
+        raise not_found()
+    if row.revoked_at is None:
+        row.revoked_at = datetime.now(UTC)
+        await audit.record(
+            db,
+            org_id=org_id,
+            actor_user_id=actor,
+            entity_type="api_key",
+            entity_id=row.id,
+            action="api_key.revoke",
+            location_id=row.location_id,
+        )
+    return row
 
 
 @dataclass

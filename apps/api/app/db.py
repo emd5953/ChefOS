@@ -129,6 +129,17 @@ async def lookup_invitation(token_hash: str) -> tuple[uuid.UUID, uuid.UUID] | No
     return (row.invitation_id, row.org_id) if row else None
 
 
+async def lookup_api_key(token_hash: str) -> tuple[uuid.UUID, uuid.UUID] | None:
+    """Resolve a bearer key hash to (key_id, org_id) through a narrow SECURITY DEFINER lookup."""
+    async with _sessionmaker()() as session, session.begin():
+        row = (
+            await session.execute(
+                text("SELECT id, org_id FROM api_key_owner(:h)"), {"h": token_hash}
+            )
+        ).first()
+    return (row.id, row.org_id) if row else None
+
+
 async def check_db() -> None:
     """Raises if the database is unreachable (used by /readyz)."""
     async with get_engine().connect() as conn:

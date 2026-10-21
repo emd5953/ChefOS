@@ -201,7 +201,8 @@ async def maybe_start_backfill(org_id: uuid.UUID, connection_id: uuid.UUID) -> s
 
 async def get_live_connection(db: AsyncSession, connection_id: uuid.UUID) -> IntegrationConnection:
     conn = await db.get(IntegrationConnection, connection_id)
-    if conn is None or conn.status == "disconnected":
+    # Push connections (app.integrations.push) are managed by API keys, not these routes.
+    if conn is None or conn.status == "disconnected" or conn.provider != PROVIDER:
         raise not_found("Connection not found")
     return conn
 
@@ -313,6 +314,9 @@ async def patch_links(
         targets = [v for v in final.values() if v is not None]
         if len(targets) != len(set(targets)):
             raise validation_error({"links": "A location can be linked to one Square location"})
+        pushed = await links.push_fed_locations(db)
+        if any(v in pushed for v in wanted.values()):
+            raise ProblemError(409, "conflict", "That location's sales already come from push")
         for ext, loc_id in wanted.items():
             loc = None
             if loc_id is not None:

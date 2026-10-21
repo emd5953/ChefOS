@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.identity.models import Location
-from app.integrations.models import IntegrationLocationLink
+from app.integrations.models import IntegrationConnection, IntegrationLocationLink
 
 
 @dataclass(frozen=True)
@@ -50,6 +50,24 @@ async def apply_link(
     await db.flush()
 
 
+async def push_fed_locations(db: AsyncSession) -> set[uuid.UUID]:
+    """Locations whose sales come from push. One location has one sales source."""
+    rows = await db.scalars(
+        select(IntegrationLocationLink.location_id)
+        .join(
+            IntegrationConnection,
+            IntegrationConnection.id == IntegrationLocationLink.connection_id,
+        )
+        .where(
+            IntegrationConnection.provider == "push",
+            IntegrationConnection.status != "disconnected",
+            IntegrationLocationLink.active.is_(True),
+            IntegrationLocationLink.location_id.is_not(None),
+        )
+    )
+    return {r for r in rows if r is not None}
+
+
 async def auto_link(db: AsyncSession, org_id: uuid.UUID, connection_id: uuid.UUID) -> list[str]:
     """Link by exact name match, and a lone Square location to a lone platform location."""
     links = list(
@@ -66,6 +84,7 @@ async def auto_link(db: AsyncSession, org_id: uuid.UUID, connection_id: uuid.UUI
         )
     )
     taken = {link.location_id for link in links if link.location_id is not None}
+    taken |= await push_fed_locations(db)
     free = [loc for loc in locations if loc.id not in taken]
     changed: list[str] = []
     unlinked = [link for link in links if link.location_id is None]
