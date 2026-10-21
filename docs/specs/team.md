@@ -18,7 +18,7 @@ Square team members and timecards already flow into `staff_members`, `timecards`
 
 ## Non-goals
 
-- TEAM-5 shift trades and open shifts, TEAM-6 actual vs scheduled hours and late clock-in alerts (including filling `daily_labor.scheduled_hours`, which stays 0), TEAM-7 tasks and checklists.
+- TEAM-5 shift trades and open shifts, TEAM-7 tasks and checklists.
 - MOB-2 manager mobile and MOB-3 inventory mobile. Manager screens are responsive but not phone-optimized.
 - Paid or external delivery: email, SMS, native push. Invitation links are copied and shared by hand.
 - Overtime, labor-law rules, salaried pay, tip pooling, labor targets, auto-scheduling, forecast overrides.

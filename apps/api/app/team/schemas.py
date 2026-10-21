@@ -582,3 +582,67 @@ class RequestsOut(BaseModel):
 class Decision(BaseModel):
     decision: Literal["approve", "deny", "reject"]
     note: Reason | None = None
+
+
+# ---------------------------------------------------------------- attendance (TEAM-6)
+
+# upcoming: not yet due; awaiting_data: due, but timecards are not imported that far yet (or the
+# location has no timecard source); on_time / late: clocked in by / after start + grace;
+# late without a clock-in: due and still none; missed: none by the shift's end.
+AttendanceStatus = Literal["upcoming", "awaiting_data", "on_time", "late", "missed"]
+
+
+class AttendanceShift(BaseModel):
+    shift_id: uuid.UUID
+    employee_id: uuid.UUID | None
+    employee_name: str | None
+    position_id: uuid.UUID
+    position_name: str
+    position_color: str
+    starts_at: datetime
+    ends_at: datetime
+    scheduled_hours: float
+    clock_in: datetime | None
+    clock_out: datetime | None
+    actual_hours: float
+    status: AttendanceStatus
+    # Minutes after start of the clock-in, or so far without one (late and missed only).
+    minutes_late: int | None
+
+
+class UnscheduledTimecard(BaseModel):
+    timecard_id: uuid.UUID
+    employee_id: uuid.UUID | None
+    employee_name: str | None
+    clock_in: datetime
+    clock_out: datetime | None
+    actual_hours: float
+
+
+class AttendanceCounts(BaseModel):
+    on_time: int = 0
+    late: int = 0
+    missed: int = 0
+    upcoming: int = 0
+    awaiting_data: int = 0
+
+
+class AttendanceDay(BaseModel):
+    business_date: date
+    scheduled_hours: float
+    actual_hours: float
+    counts: AttendanceCounts
+    shifts: list[AttendanceShift]
+    unscheduled: list[UnscheduledTimecard]
+
+
+class AttendanceOut(BaseModel):
+    location_id: uuid.UUID
+    timezone: str
+    period: dict[str, date]
+    grace_minutes: int
+    # Timecards are complete up to this instant; statuses are judged as of it.
+    as_of: datetime | None
+    open_shifts_excluded: int
+    days: list[AttendanceDay]
+    freshness: list[FreshnessOut]

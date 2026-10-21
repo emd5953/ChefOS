@@ -1,20 +1,21 @@
 """In-app notifications. No external delivery: clients poll `GET /v1/notifications`.
 
 Kinds: schedule_published, schedule_changed, time_off_decided, availability_decided (to
-employees); time_off_requested, availability_submitted, employee_deactivated (to managers).
+employees); time_off_requested, availability_submitted, employee_deactivated, shift_late,
+shift_missed (to managers). Clock-in alerts are written with `notify_once`.
 """
 
 import uuid
 from collections.abc import Iterable
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.identity.models import LocationAccess, Membership
 from app.ids import new_id
-from app.team.models import Notification
+from app.team.models import ATTENDANCE_KINDS_SQL, Notification
 from app.team.schemas import NotificationOut
 
 MAX_LIST = 50
@@ -55,6 +56,50 @@ async def notify(
         )
     )
     return len(users)
+
+
+async def notify_once(
+    db: AsyncSession,
+    org_id: uuid.UUID,
+    user_ids: Iterable[uuid.UUID],
+    *,
+    kind: str,
+    title: str,
+    body: str,
+    link: str,
+    entity_type: str,
+    entity_id: uuid.UUID,
+) -> int:
+    """Like `notify`, for the deduplicated clock-in kinds: a user who already has this kind for
+    this entity gets nothing new. Returns how many rows were written."""
+    users = sorted(set(user_ids))
+    if not users:
+        return 0
+    stmt = (
+        pg_insert(Notification)
+        .values(
+            [
+                {
+                    "id": new_id(),
+                    "org_id": org_id,
+                    "user_id": u,
+                    "kind": kind,
+                    "title": title[:200],
+                    "body": body[:1000],
+                    "link": link,
+                    "entity_type": entity_type,
+                    "entity_id": entity_id,
+                }
+                for u in users
+            ]
+        )
+        .on_conflict_do_nothing(
+            index_elements=["user_id", "kind", "entity_id"],
+            index_where=text(ATTENDANCE_KINDS_SQL),
+        )
+        .returning(Notification.id)
+    )
+    return len((await db.execute(stmt)).all())
 
 
 async def managers_for(

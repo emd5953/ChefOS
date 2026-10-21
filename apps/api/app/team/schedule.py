@@ -25,6 +25,7 @@ from app.identity.models import Location
 from app.ids import new_id
 from app.integrations.freshness import location_freshness
 from app.integrations.providers.square.business_date import business_date
+from app.integrations.readmodels import refresh_scheduled_hours
 from app.team import forecast, notify
 from app.team.models import (
     EmployeeLocation,
@@ -895,6 +896,8 @@ async def publish(
                 ]
             )
         )
+    # daily_labor.scheduled_hours follows the published snapshot.
+    await refresh_scheduled_hours(db, scope.org_id, [(loc.id, d) for d in week_dates(week_start)])
     diffs = diff_by_employee(old, shifts, now)
     people = await _rates(db, set(diffs))
     notified = 0

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, Inbox, Plus, UserPlus, Users } from "lucide-react";
+import { CalendarDays, Clock, Inbox, Plus, UserPlus, Users } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { PageHeader } from "@/components/page-header";
@@ -56,6 +56,9 @@ export function Team() {
                 <UserPlus aria-hidden /> Invite manager
               </Button>
             )}
+            <LinkButton variant="outline" href={href("/app/team/attendance")}>
+              <Clock aria-hidden /> Attendance
+            </LinkButton>
             <LinkButton variant="outline" href={href("/app/team/requests")}>
               <Inbox aria-hidden /> Requests
             </LinkButton>

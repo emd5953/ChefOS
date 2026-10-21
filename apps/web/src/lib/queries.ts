@@ -3,6 +3,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "./api";
 import type {
+  AttendanceResponse,
   CompareMode,
   Connection,
   ConnectionDetail,
@@ -51,6 +52,7 @@ export const keys = {
   myTimeOff: ["me", "time-off"] as const,
   myAvailability: ["me", "availability"] as const,
   requests: (loc: string, status: string) => ["team", "requests", loc, status] as const,
+  attendance: (loc: string, from: string, to: string) => ["team", "attendance", loc, from, to] as const,
 };
 
 export function useLocations() {
@@ -265,5 +267,16 @@ export function useRequestsInbox(locationId: string | undefined, status: "pendin
     queryFn: () => api<RequestsInbox>("/v1/team/requests", { query: { location_id: locationId, status } }),
     enabled: !!locationId,
     refetchInterval: status === "pending" ? 60_000 : false,
+  });
+}
+
+/** Scheduled vs actual per shift and day. Polls while open: late/missed change with the clock. */
+export function useAttendance(locationId: string | undefined, from: string, to: string) {
+  return useQuery({
+    queryKey: keys.attendance(locationId ?? "", from, to),
+    queryFn: () => api<AttendanceResponse>("/v1/team/attendance", { query: { location_id: locationId, from, to } }),
+    enabled: !!locationId,
+    placeholderData: keepPreviousData,
+    refetchInterval: 60_000,
   });
 }
