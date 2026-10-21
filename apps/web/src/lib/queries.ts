@@ -161,12 +161,12 @@ export function useDaily(
   });
 }
 
-export function useItems(locationId: string | undefined, from: string, to: string) {
+export function useItems(locationId: string | undefined, from: string, to: string, category?: string) {
   return useQuery({
-    queryKey: keys.items(locationId ?? "", from, to),
+    queryKey: [...keys.items(locationId ?? "", from, to), category ?? "all"],
     queryFn: () =>
       api<ItemsResponse>("/v1/commerce/items", {
-        query: { location_id: locationId, from, to, limit: 50 },
+        query: { location_id: locationId, from, to, limit: 50, ...(category ? { category } : {}) },
       }),
     enabled: !!locationId,
     placeholderData: keepPreviousData,

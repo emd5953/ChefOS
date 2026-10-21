@@ -54,9 +54,10 @@ async def items(
     from_: From,
     to: To,
     limit: Annotated[int, Query(ge=1, le=200)] = 20,
+    category: Annotated[str | None, Query(min_length=1, max_length=100)] = None,
 ) -> ItemsOut:
     loc = await _location(ctx, db, location_id)
-    return await service.items(db, ctx.org_id, loc, from_, to, limit)
+    return await service.items(db, ctx.org_id, loc, from_, to, limit, category)
 
 
 @router.get("/today", response_model=TodayOut)

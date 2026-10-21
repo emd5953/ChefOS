@@ -2,6 +2,7 @@
 
 import { AlertTriangle, UtensilsCrossed } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
 import { FreshnessBadge } from "@/components/freshness-badge";
 import { PageHeader } from "@/components/page-header";
 import { PosGate } from "@/components/pos-gate";
@@ -40,7 +41,8 @@ function ItemsFreshness({ location }: { location: Location }) {
 
 function ItemsContent({ location }: { location: Location }) {
   const r = useDateRange(location.timezone);
-  const q = useItems(location.id, r.range.from, r.range.to);
+  const [category, setCategory] = useState("");
+  const q = useItems(location.id, r.range.from, r.range.to, category || undefined);
   const { href } = useLocationScope();
   const items = q.data?.items ?? [];
   const maxShare = Math.max(1, ...items.map((i) => i.share_pct));
@@ -55,6 +57,27 @@ function ItemsContent({ location }: { location: Location }) {
         onPreset={r.setPreset}
         onCustom={r.setCustom}
       />
+
+      {q.data && q.data.categories.length > 0 && (
+        <Card>
+          <CardHeader overline="Mapped sales" title="Category mix" />
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button type="button" onClick={() => setCategory("")} aria-pressed={!category}
+              className={`rounded-xl border px-3 py-2 text-left text-xs transition-colors ${!category ? "border-accent bg-accent/10" : "border-border hover:bg-muted"}`}>
+              <span className="block font-semibold">All categories</span>
+              <span className="mt-1 block tabular text-foreground/60">{formatMoney(q.data.total_net_sales, 2)}</span>
+            </button>
+            {q.data.categories.map((item) => (
+              <button type="button" key={item.category} onClick={() => setCategory(category === item.category ? "" : item.category)} aria-pressed={category === item.category}
+                className={`rounded-xl border px-3 py-2 text-left text-xs transition-colors ${category === item.category ? "border-accent bg-accent/10" : "border-border hover:bg-muted"}`}>
+                <span className="block font-semibold">{item.category}</span>
+                <span className="mt-1 block tabular text-foreground/60">{formatMoney(item.net_sales, 2)} · {formatPct(item.share_pct)}</span>
+              </button>
+            ))}
+          </div>
+          <p className="mt-3 text-xs text-foreground/55">Category totals use the menu&rsquo;s current category mapping. Unmapped sales are shown separately.</p>
+        </Card>
+      )}
 
       {unmapped > 0 && (
         <div className="flex items-start gap-3 rounded-2xl border border-warning/30 bg-warning/8 px-4 py-3.5 text-[13px] text-foreground/80">

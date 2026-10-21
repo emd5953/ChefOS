@@ -172,6 +172,8 @@ export type ItemRow = {
 };
 export type ItemsResponse = {
   currency: "USD";
+  total_net_sales: number;
+  categories: Array<{ category: string; net_sales: number; share_pct: number }>;
   items: ItemRow[];
   unmapped_net_sales: number;
 };

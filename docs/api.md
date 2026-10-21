@@ -148,11 +148,20 @@ Days with no data appear with zeros (the series is contiguous).
 
 ### `GET /v1/commerce/items?location_id&from&to&limit=20`
 
+Optional `category` filters the returned item rows to that current menu category. Categories
+and overall totals remain unfiltered. Categories are sorted by net sales descending, then name;
+items use the same stable tie-break. Category assignment reflects the current menu mapping.
+
 ```ts
-{ currency: "USD";
+{ currency: "USD"; total_net_sales: number;
+  categories: Array<{ category: string; net_sales: number; share_pct: number }>;
   items: Array<{ name: string; category: string; quantity: number; net_sales: number; share_pct: number }>;
   unmapped_net_sales: number }
 ```
+
+`total_net_sales` is the sum of order-line net values for the date range. Mapped category totals
+plus `unmapped_net_sales` reconcile to it, including negative line adjustments. Unmapped lines
+remain visible in the separate total and are not assigned to a category.
 
 ### `GET /v1/commerce/today?location_id`
 
