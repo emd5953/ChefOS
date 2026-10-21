@@ -7,12 +7,13 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.commerce import service as commerce
 from app.db import scoped_session
 from app.identity.models import Location
+from app.integrations.models import IntegrationConnection, IntegrationStream
 from app.sous import service
 from app.sous.llm import LLMProvider, OllamaProvider
 from tests.integrations.conftest import Clock, Connected
@@ -258,6 +259,28 @@ async def test_stale_data_is_disclosed(loaded: Connected, clock: Clock) -> None:
     assert any(lim.startswith("Sales data is stale") for lim in out["limitations"])
     assert any(lim.startswith("Labor data is stale") for lim in out["limitations"])
     assert out["sales"]["status"] == "ok"  # still shown, with its as-of time
+
+
+async def test_push_sales_freshness_is_visible_in_briefing(loaded: Connected, clock: Clock) -> None:
+    async with scoped_session(loaded.org_id) as db:
+        connection = await db.get_one(IntegrationConnection, loaded.connection_id)
+        connection.provider = "push"
+        orders = await db.get_one(IntegrationStream, (connection.id, "orders"))
+        orders.last_success_at = clock.now
+        orders.data_as_of = clock.now
+        for stream in list(
+            await db.scalars(
+                select(IntegrationStream).where(
+                    IntegrationStream.connection_id == connection.id,
+                    IntegrationStream.stream != "orders",
+                )
+            )
+        ):
+            await db.delete(stream)
+    out = await get(loaded)
+    status = {f["stream"]: f["status"] for f in out["freshness"]}
+    assert out["sales"]["status"] == "ok" and status["orders"] == "fresh"
+    assert status["timecards"] == status["catalog"] == status["team_members"] == "not_connected"
 
 
 async def test_draft_shifts_never_count_as_staffing(loaded: Connected, clock: Clock) -> None:
