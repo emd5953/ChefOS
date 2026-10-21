@@ -12,7 +12,7 @@ As of 2026-10-20:
 - **Phase 0:** done.
 - **Phase 1:** M1–M5 done in simulated mode. Real-sandbox mode is untested.
 - **Phase 2:** done. Commerce views built, marketing site moved into `apps/web`, prototype deleted.
-- **Phase 5:** Sous read-only built ahead of order over Commerce data (milestones 1–4). The eval set passes 39/40 on qwen3:8b. Team and Inventory tools follow their modules.
+- **Phase 5:** Sous read-only built ahead of order over Commerce data (milestones 1–4). The eval set passes 39/40 on qwen3:8b. Team and Inventory tools (labor, published schedule, below par) added in Phase 6 B1.
 - **Phase 3:** done ([spec](specs/team.md), T1–T5). Employees from Square, logins by invitation, schedule builder with forecast and projected labor %, publish with change alerts, availability and time off with approvals, and an employee mobile view at `/my` ([ADR 0004](adr/0004-mobile-as-responsive-web.md)). Seeded by `make demo`.
 - **Phase 4:** done ([spec](specs/inventory.md)). INV-1 to INV-4 and MOB-3: catalog, counts with exceptions, purchasing and receiving, recipes with plate cost, phone-sized count and receive.
 - **Phase 6:** not started.

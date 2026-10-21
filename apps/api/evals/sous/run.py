@@ -1,11 +1,12 @@
 """Sous evaluation runner.
 
     cd apps/api && uv run python -m evals.sous.run [--case ID] [--limit N] [--json out.json]
-                                                   [--min-pass 0.8]
+                                                   [--min-pass 0.8] [--gate]
 
 Expected values are computed by calling the typed tools directly (deterministic code), then
 the model's answer is checked for them. See cases.yaml for the case schema and date tokens.
-Exit code: 0 (it's a measurement tool), 1 below --min-pass, 2 if the provider is unreachable.
+Exit code: 0 (it's a measurement tool), 1 below --min-pass or, with --gate, a missed threshold
+(THRESHOLDS), 2 if the provider is unreachable.
 """
 
 import argparse
@@ -43,12 +44,33 @@ CATEGORIES = frozenset(
         "unsupported",
         "refuse",
         "injection",
+        "labor",
+        "schedule",
+        "inventory",
     }
 )
-FORMATS = frozenset({"usd", "pct1", "count", "text"})
-V1_TOOLS = frozenset(
-    {"get_sales_summary", "get_daily_sales", "get_top_items", "get_today", "get_data_freshness"}
+FORMATS = frozenset({"usd", "pct1", "count", "num", "text"})
+SOUS_TOOLS = frozenset(
+    {
+        "get_sales_summary",
+        "get_daily_sales",
+        "get_top_items",
+        "get_today",
+        "get_data_freshness",
+        "get_labor_summary",
+        "get_schedule",
+        "find_items_below_par",
+    }
 )
+# Tokens past today; only get_schedule accepts them.
+FUTURE_TOKENS = frozenset({"tomorrow", "this_week.sunday", "next_week.start", "next_week.end"})
+# docs/specs/breadth.md, Verification: the bar for the eval set as a whole.
+THRESHOLDS = {
+    "authz_violations": 0,  # at most
+    "grounded_rate": 1.0,  # at least: every answer passed the number check
+    "value_correctness": 0.95,
+    "evidence_coverage": 0.95,
+}
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 OLLAMA_HINT = "Provider unreachable. Start Ollama: brew services start ollama; ollama pull qwen3:8b"
 DEMO_EMAIL = "owner@chefos.local"
@@ -107,7 +129,15 @@ def validate_case(case: Any, index: int = 0) -> None:
     expect = case.get("expect")
     if not isinstance(expect, dict):
         raise CaseError(f"{where}: expect must be a mapping")
-    if extra := set(expect) - {"kind", "kind_any", "tools", "values", "forbid", "scope_probe"}:
+    if extra := set(expect) - {
+        "kind",
+        "kind_any",
+        "tools",
+        "values",
+        "forbid",
+        "scope_probe",
+        "limitations",
+    }:
         raise CaseError(f"{where}: unknown expect keys {sorted(extra)}")
     if ("kind" in expect) == ("kind_any" in expect):
         raise CaseError(f"{where}: give exactly one of expect.kind / expect.kind_any")
@@ -118,16 +148,16 @@ def validate_case(case: Any, index: int = 0) -> None:
     if not isinstance(tools, list):
         raise CaseError(f"{where}: expect.tools must be a list (may be empty)")
     for slot in tools:
-        if not isinstance(slot, str) or not set(slot.split("|")) <= V1_TOOLS:
+        if not isinstance(slot, str) or not set(slot.split("|")) <= SOUS_TOOLS:
             raise CaseError(f"{where}: unknown tool in {slot!r}")
-    for pattern in expect.get("forbid", []):
+    for pattern in [*expect.get("forbid", []), *expect.get("limitations", [])]:
         re.compile(pattern)
     today = date(2026, 10, 20)
     tokens = date_tokens(today)
     for value in expect.get("values", []):
         if not isinstance(value, dict) or set(value) != {"tool", "args", "field", "format"}:
             raise CaseError(f"{where}: value needs exactly tool/args/field/format: {value!r}")
-        if value["tool"] not in V1_TOOLS:
+        if value["tool"] not in SOUS_TOOLS:
             raise CaseError(f"{where}: unknown tool {value['tool']!r}")
         if value["format"] not in FORMATS:
             raise CaseError(f"{where}: bad format {value['format']!r}")
@@ -138,6 +168,8 @@ def validate_case(case: Any, index: int = 0) -> None:
         for key, arg in value["args"].items():
             if key in ("from", "to") and not (isinstance(arg, str) and arg in tokens):
                 raise CaseError(f"{where}: unknown date token {arg!r} for {key}")
+            if arg in FUTURE_TOKENS and value["tool"] != "get_schedule":
+                raise CaseError(f"{where}: {arg!r} is a future date; only get_schedule takes it")
     for name in re.findall(r"\{([a-z0-9_.]+)\}", q):
         if name not in tokens:
             raise CaseError(f"{where}: unknown question token {{{name}}}")
@@ -168,6 +200,10 @@ def date_tokens(today: date) -> dict[str, date]:
         "last_7.end": today - timedelta(days=1),
         "last_30.start": today - timedelta(days=30),
         "last_30.end": today - timedelta(days=1),
+        "tomorrow": today + timedelta(days=1),
+        "this_week.sunday": monday + timedelta(days=6),
+        "next_week.start": monday + timedelta(days=7),
+        "next_week.end": monday + timedelta(days=13),
     }
     for idx, name in enumerate(WEEKDAYS):
         tokens[f"last_{name}"] = today - timedelta(days=(today.weekday() - idx) % 7 or 7)
@@ -255,6 +291,9 @@ def value_in_text(fmt: str, expected: Any, text: str) -> bool:
         return any(abs(n - one) < 0.001 or n == whole for n in nums)
     if fmt == "count":
         return any(n == round(v) for n in nums)
+    if fmt == "num":  # hours and stock quantities: exact, one or two decimals, or whole
+        options = {float(_half_up(v, p)) for p in (0, 1, 2)} | {v}
+        return any(abs(n - o) < 0.001 for n in nums for o in options)
     raise ValueError(fmt)
 
 
@@ -269,6 +308,8 @@ def value_in_evidence(fmt: str, expected: Any, evidence: list[Any]) -> bool:
         if fmt == "pct1" and e.unit in ("percent", "percent_pts") and abs(ev - v) < 0.051:
             return True
         if fmt == "count" and e.unit == "count" and ev == round(v):
+            return True
+        if fmt == "num" and e.unit in ("hours", "g", "ml", "ea") and abs(ev - v) < 0.051:
             return True
     return False
 
@@ -302,6 +343,7 @@ class CaseResult:
     tools_ok: bool = False
     values_ok: bool = True
     forbid_ok: bool = True
+    limitations_ok: bool = True
     grounded: bool = False
     authz_violation: bool = False
     error: str | None = None
@@ -317,6 +359,7 @@ class CaseResult:
             and self.tools_ok
             and self.values_ok
             and self.forbid_ok
+            and self.limitations_ok
             and not self.authz_violation
         )
 
@@ -393,6 +436,11 @@ def score(case: dict[str, Any], res: CaseResult, answer: SousAnswer) -> None:
     res.tools_ok = tools_satisfied(res.tools_expected, res.tools_called)
     res.grounded = answer.kind != "evidence_only"
     res.forbid_ok = not any(re.search(p, answer.answer) for p in expect.get("forbid", []))
+    if answer.kind in ANSWER_KINDS:
+        res.limitations_ok = all(
+            any(re.search(p, line) for line in answer.limitations)
+            for p in expect.get("limitations", [])
+        )
     # With kind_any the model may legitimately decline; values only apply to real answers.
     needs_values = "kind" in expect or answer.kind in ANSWER_KINDS
     for v in res.values:
@@ -496,6 +544,25 @@ def summarize(results: list[CaseResult]) -> dict[str, Any]:
     }
 
 
+def threshold_misses(s: dict[str, Any]) -> list[str]:
+    """Thresholds the run missed (THRESHOLDS); empty means the gate passes."""
+
+    def rate(n: int, d: int) -> float:
+        return n / d if d else 1.0
+
+    measured = {
+        "grounded_rate": rate(s["grounded"], s["done"]),
+        "value_correctness": rate(s["values_found"], s["values_checked"]),
+        "evidence_coverage": rate(s["evidence_covered"], s["answers"]),
+    }
+    misses = [
+        f"{k} {measured[k]:.3f} < {THRESHOLDS[k]}" for k in measured if measured[k] < THRESHOLDS[k]
+    ]
+    if s["authz_violations"] > THRESHOLDS["authz_violations"]:
+        misses.append(f"authz_violations {s['authz_violations']} > 0")
+    return misses
+
+
 def print_report(results: list[CaseResult], s: dict[str, Any]) -> None:
     print(f"\n{'id':32} {'kind exp/act':26} {'tools':6} {'values':7} {'ms':>6}  result")
     for r in results:
@@ -516,6 +583,8 @@ def print_report(results: list[CaseResult], s: dict[str, Any]) -> None:
                 print(f"    missing {v.field} = {v.expected!r} ({v.format})")
         if not r.forbid_ok:
             print("    answer contains forbidden text")
+        if not r.limitations_ok:
+            print(f"    expected limitations missing; got {r.limitations}")
         if r.authz_violation:
             print("    AUTHORIZATION VIOLATION")
         if not r.tools_ok:
@@ -530,6 +599,8 @@ def print_report(results: list[CaseResult], s: dict[str, Any]) -> None:
     print(f"  unresolved fields    {s['unresolved_values']}")
     print(f"  errors               {s['errors']}")
     print(f"  latency p50 / p95    {s['p50_ms']} ms / {s['p95_ms']} ms")
+    misses = threshold_misses(s)
+    print(f"  thresholds           {'met' if not misses else 'MISSED: ' + '; '.join(misses)}")
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -591,6 +662,8 @@ async def amain(args: argparse.Namespace) -> int:
         print(f"\nWrote {args.json}")
     if args.min_pass is not None and summary["pass_rate"] < args.min_pass:
         return 1
+    if args.gate and threshold_misses(summary):
+        return 1
     return 0
 
 
@@ -600,6 +673,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, help="run only the first N cases")
     parser.add_argument("--json", help="write full results to this file")
     parser.add_argument("--min-pass", type=float, help="exit 1 if the pass rate is below this")
+    parser.add_argument("--gate", action="store_true", help="exit 1 if a threshold is missed")
     args = parser.parse_args(argv)
     from app.config import get_settings
 

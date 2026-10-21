@@ -17,6 +17,10 @@ export function formatEvidence(e: Pick<SousEvidence, "value" | "unit">): string 
       return `${e.value < 0 ? "−" : "+"}${Math.abs(e.value).toFixed(1)} pts`;
     case "hours":
       return formatHours(e.value);
+    case "g":
+    case "ml":
+    case "ea":
+      return `${e.value.toLocaleString("en-US", { maximumFractionDigits: 2 })} ${e.unit}`;
     default:
       return formatInt(e.value);
   }

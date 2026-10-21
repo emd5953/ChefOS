@@ -1,33 +1,57 @@
-"""Sous tools: a small allowlist of typed, read-only wrappers over `app.commerce.service`.
+"""Sous tools: a small allowlist of typed, read-only wrappers over the Commerce, Team and
+Inventory read paths.
 
 The model supplies dates and options only. The location comes from the API, which has already
-authorized it. Each tool returns JSON-safe `data` for the model (money in dollars, percents in
-percent units) and deterministic `evidence` rows (money in cents). The model never builds evidence.
+authorized it, and `run_tool` checks it again against the caller's scope before any query.
+Each tool returns JSON-safe `data` for the model (money in dollars, percents in percent units)
+and deterministic `evidence` rows (money in cents). The model never builds evidence.
 """
 
 import re
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 from typing import Any, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.commerce import service
+from app.commerce.models import DailyLabor
 from app.commerce.schemas import FreshnessOut, Totals
 from app.identity.models import Location
 from app.integrations.freshness import FreshnessItem, location_freshness
 from app.integrations.providers.square.business_date import business_date, get_zone
-from app.sous.schemas import Evidence, Unit
+from app.sous.schemas import (
+    Evidence,
+    FactsPeriod,
+    ItemFacts,
+    LaborDay,
+    LaborFacts,
+    ParItemFacts,
+    ScheduleDayFacts,
+    ScheduleFacts,
+    ScheduleShiftFacts,
+    Unit,
+)
+from app.team.models import Position, PublishedShift, Schedule, Shift, StaffMember, Station
+from app.team.schedule import count_changes, label_time, paid_hours
 
 log = structlog.get_logger()
 
 MAX_RANGE_DAYS = 400
 MAX_DAILY_DAYS = 92
 DAILY_EVIDENCE_DAYS = 14
+MAX_LABOR_DAYS = 92
+MAX_SCHEDULE_DAYS = 14
+SCHEDULE_AHEAD_DAYS = 56  # the schedule tool may look this far past today
+MAX_SCHEDULE_SHIFTS = 60
+MAX_PAR_ITEMS = 50
+LISTED_DATES = 31  # dates listed by name in a facts field
 
 
 class ToolArgError(Exception):
@@ -44,6 +68,7 @@ class ToolResult:
     freshness: list[FreshnessOut] = field(default_factory=list)
     streams: tuple[str, ...] = ()  # streams the result depends on, for limitations
     hidden_names: int = 0  # POS text fields withheld as instruction-like, for limitations
+    notes: list[str] = field(default_factory=list)  # data gaps the tool found, for limitations
 
 
 class DateRange(BaseModel):
@@ -71,6 +96,22 @@ class TopItemsArgs(DateRange):
 
 class NoArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class LaborArgs(DateRange):
+    pass
+
+
+class ScheduleArgs(DateRange):
+    pass
+
+
+class BelowParArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int = Field(
+        default=25, ge=1, le=MAX_PAR_ITEMS, description="How many items to list, 1 to 50"
+    )
 
 
 # --- helpers ---------------------------------------------------------------------------------
@@ -460,6 +501,368 @@ async def _freshness(
     )
 
 
+# --- Team and Inventory tools ----------------------------------------------------------------
+
+
+def _num(value: Decimal | float) -> float:
+    """A JSON number without float noise: quantities are NUMERIC(18, 6) in the database."""
+    return float(round(Decimal(str(value)), 4).normalize())
+
+
+def _date_list(days: list[date]) -> str:
+    shown = ", ".join(d.isoformat() for d in days[:5])
+    return shown + (f" and {len(days) - 5} more" if len(days) > 5 else "")
+
+
+async def _labor_summary(
+    db: AsyncSession, org_id: uuid.UUID, loc: Location, args: LaborArgs, today: date, now: datetime
+) -> ToolResult:
+    n = _check_range(args.from_, args.to, today, MAX_LABOR_DAYS)
+    out = await service.daily(db, org_id, loc, args.from_, args.to)
+    # daily_labor has a row only for days with timecards; a missing day is unknown, not zero.
+    recorded = set(
+        await db.scalars(
+            select(DailyLabor.business_date).where(
+                DailyLabor.org_id == org_id,
+                DailyLabor.location_id == loc.id,
+                DailyLabor.business_date.between(args.from_, args.to),
+            )
+        )
+    )
+    freshness = _fresh_out(await location_freshness(db, loc.id, now))
+    labor_at = _as_of(freshness, "timecards")
+    missing = [d.business_date for d in out.days if d.business_date not in recorded]
+    net = sum(d.net_sales for d in out.days)
+    cost = sum(d.labor_cost for d in out.days)
+    hours = sum(d.labor_hours for d in out.days)
+    worked = len(recorded)
+    facts = LaborFacts(
+        period=FactsPeriod(from_=args.from_, to=args.to, days=n),
+        days_with_timecards=worked,
+        days_without_timecards=missing[:LISTED_DATES],
+        labor_hours=round(hours, 2) if worked else None,
+        labor_cost_usd=usd(cost) if worked else None,
+        net_sales_usd=usd(net) or 0.0,
+        labor_pct=round(cost / net * 100, 1) if worked and net > 0 else None,
+        days=[
+            LaborDay(
+                date=d.business_date,
+                weekday=d.business_date.strftime("%A"),
+                timecards=d.business_date in recorded,
+                labor_hours=d.labor_hours if d.business_date in recorded else None,
+                labor_cost_usd=usd(d.labor_cost) if d.business_date in recorded else None,
+                net_sales_usd=usd(d.net_sales) or 0.0,
+                labor_pct=d.labor_pct if d.business_date in recorded else None,
+            )
+            for d in out.days
+        ]
+        if n <= DAILY_EVIDENCE_DAYS
+        else None,
+    )
+    notes: list[str] = []
+    span = f"{args.from_.isoformat()} to {args.to.isoformat()}"
+    if not worked:
+        facts.note = "No timecards were recorded in this period, so actual labor is unknown."
+        notes.append(f"No timecards were recorded for {span}; labor is unknown, not zero.")
+    elif missing:
+        facts.note = (
+            "Some days have no timecards; their labor is unknown, so the totals cover only "
+            "days with timecards."
+        )
+        notes.append(
+            f"No timecards for {len(missing)} of {n} days ({_date_list(missing)}); labor for "
+            "those days is unknown, not zero, so labor % is understated."
+        )
+    tag = f" ({span})"
+    evidence = [
+        Evidence(
+            label=f"Days with timecards{tag}", value=worked, unit="count",
+            source="get_labor_summary", as_of=labor_at,
+        )
+    ]  # fmt: skip
+    if worked:
+        evidence += [
+            Evidence(
+                label=f"Labor hours{tag}", value=round(hours, 2), unit="hours",
+                source="get_labor_summary", as_of=labor_at,
+            ),
+            Evidence(
+                label=f"Labor cost{tag}", value=cost, unit="usd_cents",
+                source="get_labor_summary", as_of=labor_at,
+            ),
+        ]  # fmt: skip
+        if facts.labor_pct is not None:
+            evidence.append(
+                Evidence(
+                    label=f"Labor %{tag}", value=facts.labor_pct, unit="percent",
+                    source="get_labor_summary", as_of=labor_at,
+                )
+            )  # fmt: skip
+    return ToolResult(
+        data=facts.model_dump(mode="json", by_alias=True),
+        evidence=evidence,
+        period=(args.from_, args.to),
+        freshness=freshness,
+        streams=("timecards", "orders"),
+        notes=notes,
+    )
+
+
+def _check_schedule_range(first: date, last: date, today: date) -> int:
+    if last < first:
+        raise ToolArgError("`to` must be on or after `from`.")
+    if last > today + timedelta(days=SCHEDULE_AHEAD_DAYS):
+        raise ToolArgError(f"Schedules can be checked at most {SCHEDULE_AHEAD_DAYS} days ahead.")
+    if first < today - timedelta(days=MAX_RANGE_DAYS):
+        raise ToolArgError(f"Schedules can be checked at most {MAX_RANGE_DAYS} days back.")
+    days = (last - first).days + 1
+    if days > MAX_SCHEDULE_DAYS:
+        raise ToolArgError(f"The range is {days} days; the limit is {MAX_SCHEDULE_DAYS}.")
+    return days
+
+
+async def _schedule(
+    db: AsyncSession, org_id: uuid.UUID, loc: Location, args: ScheduleArgs, today: date, _: Any
+) -> ToolResult:
+    """Published shifts only: drafts are a manager's work in progress, not who is working."""
+    n = _check_schedule_range(args.from_, args.to, today)
+    zone = get_zone(loc.timezone)
+    monday = args.from_ - timedelta(days=args.from_.weekday())
+    schedules = list(
+        await db.scalars(
+            select(Schedule).where(
+                Schedule.org_id == org_id,
+                Schedule.location_id == loc.id,
+                Schedule.week_start.between(monday, args.to),
+            )
+        )
+    )
+    published = {s.id: s for s in schedules if s.published_version is not None}
+    rows = (
+        (
+            await db.execute(
+                select(PublishedShift, Position.name, Station.name, StaffMember.display_name)
+                .join(Position, Position.id == PublishedShift.position_id)
+                .outerjoin(Station, Station.id == PublishedShift.station_id)
+                .outerjoin(StaffMember, StaffMember.id == PublishedShift.employee_id)
+                .where(
+                    PublishedShift.org_id == org_id,
+                    PublishedShift.location_id == loc.id,
+                    PublishedShift.schedule_id.in_(list(published)),
+                    PublishedShift.business_date.between(args.from_, args.to),
+                )
+                .order_by(PublishedShift.starts_at, PublishedShift.id)
+            )
+        ).all()
+        if published
+        else []
+    )
+    # Whether the draft differs from what employees see, for a label only; drafts aren't shown.
+    changed = False
+    for sched in published.values():
+        drafts = list(await db.scalars(select(Shift).where(Shift.schedule_id == sched.id)))
+        live = list(
+            await db.scalars(select(PublishedShift).where(PublishedShift.schedule_id == sched.id))
+        )
+        changed = changed or count_changes(drafts, live) > 0
+    covered = {
+        s.week_start + timedelta(days=i) for s in published.values() for i in range(7)
+    }  # fmt: skip
+    dates = [args.from_ + timedelta(days=i) for i in range(n)]
+    hidden = 0
+    shifts: list[ScheduleShiftFacts] = []
+    hours_by_day: dict[date, Decimal] = {d: Decimal(0) for d in dates}
+    count_by_day: dict[date, int] = dict.fromkeys(dates, 0)
+    people: set[uuid.UUID] = set()
+    for shift, position, station, employee in rows:
+        hours = paid_hours(shift.starts_at, shift.ends_at, shift.break_minutes)
+        hours_by_day[shift.business_date] += hours
+        count_by_day[shift.business_date] += 1
+        if shift.employee_id is not None:
+            people.add(shift.employee_id)
+        names = [_text(v) if v else ("", False) for v in (employee, position, station)]
+        hidden += sum(h for _, h in names)
+        start, end = shift.starts_at.astimezone(zone), shift.ends_at.astimezone(zone)
+        shifts.append(
+            ScheduleShiftFacts(
+                date=shift.business_date,
+                weekday=shift.business_date.strftime("%A"),
+                employee=names[0][0] or "Unassigned",
+                position=names[1][0],
+                station=names[2][0] or None,
+                starts=label_time(shift.starts_at, zone),
+                ends=label_time(shift.ends_at, zone),
+                ends_next_day=end.date() > start.date(),
+                paid_hours=round(float(hours), 2),
+            )
+        )
+    unpublished = [d for d in dates if d not in covered]
+    total_hours = round(float(sum(hours_by_day.values(), Decimal(0))), 2)
+    facts = ScheduleFacts(
+        period=FactsPeriod(from_=args.from_, to=args.to, days=n),
+        shift_count=len(rows),
+        scheduled_hours=total_hours,
+        people_scheduled=len(people),
+        days=[
+            ScheduleDayFacts(
+                date=d,
+                weekday=d.strftime("%A"),
+                published=d in covered,
+                shifts=count_by_day[d],
+                scheduled_hours=round(float(hours_by_day[d]), 2),
+            )
+            for d in dates
+        ],
+        shifts=shifts[:MAX_SCHEDULE_SHIFTS],
+        shifts_shown=min(len(shifts), MAX_SCHEDULE_SHIFTS),
+        unpublished_dates=unpublished,
+        draft_has_unpublished_changes=changed,
+    )
+    notes: list[str] = []
+    if unpublished:
+        facts.note = "No schedule is published for some dates; nobody is shown as working then."
+        notes.append(f"No schedule is published for {_date_list(unpublished)}.")
+    elif not rows:
+        facts.note = "The published schedule has no shifts in this period."
+    if changed:
+        notes.append(
+            "The draft schedule has changes that are not published; Sous shows published "
+            "shifts only."
+        )
+    if len(shifts) > MAX_SCHEDULE_SHIFTS:
+        notes.append(f"Showing the first {MAX_SCHEDULE_SHIFTS} of {len(shifts)} shifts.")
+    as_of = max((s.published_at for s in published.values() if s.published_at), default=None)
+    tag = f" ({args.from_.isoformat()} to {args.to.isoformat()})"
+    evidence = [
+        Evidence(
+            label=f"Published shifts{tag}", value=len(rows), unit="count", source="get_schedule",
+            as_of=as_of,
+        ),
+        Evidence(
+            label=f"Scheduled hours{tag}", value=total_hours, unit="hours", source="get_schedule",
+            as_of=as_of,
+        ),
+    ]  # fmt: skip
+    if n <= 7:
+        evidence += [
+            Evidence(
+                label=f"Published shifts {d.isoformat()}", value=count_by_day[d], unit="count",
+                source="get_schedule", as_of=as_of,
+            )
+            for d in dates
+            if d in covered
+        ]  # fmt: skip
+    return ToolResult(
+        data=facts.model_dump(mode="json", by_alias=True),
+        evidence=evidence,
+        period=(args.from_, args.to),
+        hidden_names=hidden,
+        notes=notes,
+    )
+
+
+_PAR_ROWS = text("""
+SELECT i.name, i.category, i.base_unit, p.par_base_quantity AS par,
+       COALESCE(l.on_hand_base_quantity, 0) AS on_hand, l.updated_at AS level_at,
+       l.item_id IS NULL AS never_counted
+FROM inventory_items i
+LEFT JOIN inventory_levels l ON l.org_id = i.org_id AND l.item_id = i.id AND l.location_id = :loc
+LEFT JOIN inventory_pars p ON p.org_id = i.org_id AND p.item_id = i.id AND p.location_id = :loc
+WHERE i.org_id = :org AND i.active
+ORDER BY i.name, i.id
+""")
+
+
+async def _below_par(
+    db: AsyncSession, org_id: uuid.UUID, loc: Location, args: BelowParArgs, today: date, _: Any
+) -> ToolResult:
+    rows = (await db.execute(_PAR_ROWS, {"org": org_id, "loc": loc.id})).all()
+    zone = get_zone(loc.timezone)
+    as_of = max((r.level_at for r in rows if r.level_at is not None), default=None)
+    with_par = [r for r in rows if r.par is not None]
+    below = sorted(
+        (r for r in with_par if r.on_hand < r.par),
+        # Most depleted first: share of par on hand, then the larger shortfall.
+        key=lambda r: (r.on_hand / r.par if r.par else 0, -(r.par - r.on_hand)),
+    )
+    no_par = [r for r in rows if r.par is None]
+    hidden = 0
+    items: list[ParItemFacts] = []
+    shown = below[: args.limit]
+    for r in shown:
+        name, name_hidden = _text(r.name)
+        category, category_hidden = _text(r.category)
+        hidden += name_hidden + category_hidden
+        items.append(
+            ParItemFacts(
+                name=name,
+                category=category,
+                base_unit=r.base_unit,
+                on_hand=_num(r.on_hand),
+                par=_num(r.par),
+                shortfall=_num(r.par - r.on_hand),
+                never_counted=r.never_counted,
+            )
+        )
+    without: list[str] = []
+    for r in no_par[:10]:
+        name, name_hidden = _text(r.name)
+        hidden += name_hidden
+        without.append(name)
+    facts = ItemFacts(
+        items_tracked=len(rows),
+        items_with_par=len(with_par),
+        below_par_count=len(below),
+        items=items,
+        items_shown=len(items),
+        items_without_par=len(no_par),
+        without_par_names=without,
+        stock_as_of_local=as_of.astimezone(zone).strftime("%b %-d, %-I:%M %p") if as_of else None,
+    )
+    notes: list[str] = []
+    if not rows:
+        facts.note = "No inventory items are set up yet."
+    elif not with_par:
+        facts.note = "No par levels are set at this location, so nothing can be checked."
+    if no_par and rows:
+        notes.append(f"{len(no_par)} item(s) have no par at this location and were not checked.")
+    never = sum(1 for r in below if r.never_counted)
+    if never:
+        notes.append(
+            f"{never} below-par item(s) have never been counted or received here; on hand reads 0."
+        )
+    if len(below) > len(shown):
+        notes.append(f"Showing {len(shown)} of {len(below)} items below par.")
+    evidence = [
+        Evidence(
+            label="Items below par", value=len(below), unit="count", source="find_items_below_par",
+            as_of=as_of,
+        ),
+        Evidence(
+            label="Items without a par", value=len(no_par), unit="count",
+            source="find_items_below_par", as_of=as_of,
+        ),
+    ]  # fmt: skip
+    for it, r in zip(items, shown, strict=True):
+        unit: Unit = r.base_unit
+        evidence += [
+            Evidence(
+                label=f"On hand: {it.name} ({unit})", value=it.on_hand, unit=unit,
+                source="find_items_below_par", as_of=r.level_at,
+            ),
+            Evidence(
+                label=f"Par: {it.name} ({unit})", value=it.par, unit=unit,
+                source="find_items_below_par", as_of=r.level_at,
+            ),
+        ]  # fmt: skip
+    return ToolResult(
+        data=facts.model_dump(mode="json", by_alias=True),
+        evidence=evidence,
+        hidden_names=hidden,
+        notes=notes,
+    )
+
+
 @dataclass(frozen=True)
 class ToolDef:
     name: str
@@ -505,6 +908,29 @@ TOOLS: dict[str, ToolDef] = {
             "catalog and team members.",
             NoArgs,
             _freshness,
+        ),
+        ToolDef(
+            "get_labor_summary",
+            "Actual labor from timecards for a date range of at most 92 days: paid hours, labor "
+            "cost, labor % of net sales, and which days have no timecards (unknown, not zero). "
+            "Day by day for ranges of 14 days or less. Use this for hours worked and labor cost.",
+            LaborArgs,
+            _labor_summary,
+        ),
+        ToolDef(
+            "get_schedule",
+            "Published shifts for a date range of at most 14 days, past or up to 56 days ahead: "
+            "who works, position, start and end times (overnight shifts end the next day), "
+            "scheduled hours per day. Drafts are not shown. Use this for who is working.",
+            ScheduleArgs,
+            _schedule,
+        ),
+        ToolDef(
+            "find_items_below_par",
+            "Inventory items whose stock on hand is below their par level at this location, most "
+            "depleted first, with quantities in base units (g, ml or ea), plus items with no par.",
+            BelowParArgs,
+            _below_par,
         ),
     )
 }
@@ -557,11 +983,19 @@ async def run_tool(
     org_id: uuid.UUID,
     loc: Location,
     now: datetime,
+    *,
+    allowed: Collection[uuid.UUID] | None = None,
 ) -> ToolResult:
-    """Validate and run one tool. Never raises: failures come back as `ok=False` results."""
+    """Validate and run one tool. Never raises: failures come back as `ok=False` results.
+
+    `allowed` is the caller's current location scope. The location is rechecked against it, and
+    against the org, before any query runs."""
     tool = TOOLS.get(name)
     if tool is None:
         return _failed(name, f"Unknown tool. Available tools: {', '.join(TOOL_NAMES)}.")
+    if loc.org_id != org_id or (allowed is not None and loc.id not in allowed):
+        log.warning("sous_tool_scope_denied", tool=name)
+        return _failed(name, "This location is outside your access.")
     try:
         parsed = tool.args.model_validate(args if isinstance(args, dict) else {})
     except ValidationError as exc:
@@ -582,7 +1016,9 @@ async def run_tool(
 
 __all__ = [
     "MAX_DAILY_DAYS",
+    "MAX_LABOR_DAYS",
     "MAX_RANGE_DAYS",
+    "MAX_SCHEDULE_DAYS",
     "TOOLS",
     "TOOL_NAMES",
     "ToolResult",

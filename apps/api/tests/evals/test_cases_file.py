@@ -6,6 +6,7 @@ import pytest
 
 from evals.sous.run import (
     CASES_PATH,
+    FUTURE_TOKENS,
     CaseError,
     date_tokens,
     extract_field,
@@ -20,11 +21,20 @@ from evals.sous.run import (
 
 def test_cases_file_is_valid() -> None:
     cases = load_cases(CASES_PATH)
-    assert 30 <= len(cases) <= 45
+    assert 45 <= len(cases) <= 60
     categories = {c["category"] for c in cases}
-    assert {"sales", "comparison", "items", "clarify", "unsupported", "refuse", "injection"} <= (
-        categories
-    )
+    assert {
+        "sales",
+        "comparison",
+        "items",
+        "clarify",
+        "unsupported",
+        "refuse",
+        "injection",
+        "labor",
+        "schedule",
+        "inventory",
+    } <= categories
 
 
 def test_every_token_resolves_to_a_valid_range_on_any_day() -> None:
@@ -33,7 +43,8 @@ def test_every_token_resolves_to_a_valid_range_on_any_day() -> None:
     for offset in range(400):
         today = start + timedelta(days=offset)
         tokens = date_tokens(today)
-        assert all(d <= today for d in tokens.values())
+        assert all(d <= today for k, d in tokens.items() if k not in FUTURE_TOKENS)
+        assert all(tokens[k] > today for k in FUTURE_TOKENS - {"this_week.sunday"})
         for case in cases:
             format_question(case["question"], tokens)
             for v in case["expect"].get("values", []):
@@ -50,6 +61,8 @@ def test_date_tokens_known_values() -> None:
     assert t["last_saturday"] == date(2026, 10, 17)
     assert t["last_tuesday"] == date(2026, 10, 13)
     assert (t["last_7.start"], t["last_7.end"]) == (date(2026, 10, 13), date(2026, 10, 19))
+    assert (t["tomorrow"], t["this_week.sunday"]) == (date(2026, 10, 21), date(2026, 10, 25))
+    assert (t["next_week.start"], t["next_week.end"]) == (date(2026, 10, 26), date(2026, 11, 1))
 
 
 @pytest.mark.parametrize(
@@ -95,6 +108,8 @@ def test_value_matching() -> None:
     assert not value_in_text("usd", 12345.67, "about $12,000")
     assert value_in_text("pct1", -32.0 / 10, "down 3.2%")
     assert value_in_text("count", 214, "We rang 214 orders")
+    assert value_in_text("num", 312.46, "312.5 hours") and value_in_text("num", 1500, "1,500 g")
+    assert not value_in_text("num", 312.46, "320 hours")
     assert not value_in_text("count", 214, "We rang 2140 orders")
     assert value_in_text("text", "dine_in", "Dine-in led at 60%")
 

@@ -361,19 +361,21 @@ Item base units must be `g` for mass, `ml` for volume, or `ea` for count. INV-1 
 
 ## Sous
 
-Read-only operations assistant over a location's sales and labor data. The model picks from five typed tools (`get_sales_summary`, `get_daily_sales`, `get_top_items`, `get_today`, `get_data_freshness`) and explains what they return. Numbers in the answer must match tool results; evidence and limitations are computed by the API. Design: [Sous spec](specs/sous.md).
+Read-only operations assistant over a location's sales, labor, published schedule and inventory pars. The model picks from eight typed tools (`get_sales_summary`, `get_daily_sales`, `get_top_items`, `get_today`, `get_data_freshness`, `get_labor_summary`, `get_schedule`, `find_items_below_par`) and explains what they return. Numbers in the answer must match tool results; evidence and limitations are computed by the API. Design: [Sous spec](specs/sous.md).
 
 ```ts
 type SousKind = "answer" | "clarify" | "refuse" | "unsupported" | "evidence_only"
 type Evidence = { label: string; value: number;
-                  unit: "usd_cents" | "count" | "percent" | "percent_pts" | "hours";
+                  unit: "usd_cents" | "count" | "percent" | "percent_pts" | "hours"
+                        | "g" | "ml" | "ea" /* stock in an item's base unit */;
                   source: string /* tool name */; as_of: string | null }
 type SousAnswer = {
   kind: SousKind;
   answer: string;                       // plain text, no markdown
   period: { from: string; to: string; timezone: string } | null;
   evidence: Evidence[];
-  limitations: string[];                // stale / failing / not connected streams, failed tools
+  limitations: string[];                // stale / failing / not connected streams, data gaps
+                                        // (no timecards, unpublished dates, no par), failed tools
   tools_used: Array<{ name: string; args: Record<string, unknown>; ms: number; ok: boolean }>;
   model: string; prompt_version: string; request_id: string }
 type SousStatus = { provider: "ollama" | "fake"; model: string;

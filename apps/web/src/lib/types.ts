@@ -21,7 +21,8 @@ export type Freshness = {
   status: FreshnessStatus;
 };
 
-export type StreamName = "locations" | "catalog" | "orders" | "team_members" | "timecards";
+export type StreamName =
+  "locations" | "catalog" | "orders" | "team_members" | "timecards";
 export type StreamHealth = {
   stream: StreamName;
   status: "fresh" | "stale" | "failing" | "pending";
@@ -39,7 +40,8 @@ export type LocationLink = {
   location_id: string | null;
 };
 
-export type ConnectionStatus = "pending" | "active" | "needs_reauth" | "error" | "disconnected";
+export type ConnectionStatus =
+  "pending" | "active" | "needs_reauth" | "error" | "disconnected";
 export type Connection = {
   id: string;
   provider: "square";
@@ -102,7 +104,13 @@ export type Totals = {
 };
 
 // ---- Auth ----
-export type Session = { user: User; org: Org; role: Role; csrf_token: string; has_employee: boolean };
+export type Session = {
+  user: User;
+  org: Org;
+  role: Role;
+  csrf_token: string;
+  has_employee: boolean;
+};
 export type SignupResponse = Session & { location: Location };
 export type SignupBody = {
   email: string;
@@ -126,7 +134,10 @@ export type LocationCreate = {
 export type LocationPatch = Partial<Omit<Location, "id" | "archived_at">>;
 
 // ---- Commerce ----
-export type DailyRow = Totals & { business_date: string; channels: Record<Channel, number> };
+export type DailyRow = Totals & {
+  business_date: string;
+  channels: Record<Channel, number>;
+};
 export type DailyResponse = {
   location_id: string;
   currency: "USD";
@@ -185,8 +196,17 @@ export type SousStatus = {
   breaker?: "closed" | "open" | "half_open";
 };
 
-export type SousKind = "answer" | "clarify" | "refuse" | "unsupported" | "evidence_only";
-export type SousUnit = "usd_cents" | "count" | "percent" | "percent_pts" | "hours";
+export type SousKind =
+  "answer" | "clarify" | "refuse" | "unsupported" | "evidence_only";
+export type SousUnit =
+  | "usd_cents"
+  | "count"
+  | "percent"
+  | "percent_pts"
+  | "hours"
+  | "g"
+  | "ml"
+  | "ea";
 
 export type SousEvidence = {
   label: string;
@@ -196,7 +216,12 @@ export type SousEvidence = {
   as_of: string | null;
 };
 
-export type SousToolCall = { name: string; args: Record<string, unknown>; ms: number; ok: boolean };
+export type SousToolCall = {
+  name: string;
+  args: Record<string, unknown>;
+  ms: number;
+  ok: boolean;
+};
 
 export type SousAnswer = {
   kind: SousKind;
@@ -212,12 +237,22 @@ export type SousAnswer = {
 };
 
 export type SousStatusEvent = { label: string };
-export type SousToolEvent = { name: string; args: Record<string, unknown>; ms: number; ok: boolean; label: string };
+export type SousToolEvent = {
+  name: string;
+  args: Record<string, unknown>;
+  ms: number;
+  ok: boolean;
+  label: string;
+};
 export type SousErrorEvent = { status: number; code: string; detail: string };
 
 export type SousTurn = { role: "user" | "assistant"; content: string };
 
-export type SousAskInput = { question: string; location_id: string; history?: SousTurn[] };
+export type SousAskInput = {
+  question: string;
+  location_id: string;
+  history?: SousTurn[];
+};
 
 // GET /v1/sous/briefing: deterministic, no model. `unavailable` = the source failed or isn't
 // connected; `no_data` = it answered with nothing.
@@ -263,7 +298,11 @@ export type Briefing = {
     compare_net_sales: number | null;
     net_sales_change_pct: number | null;
   };
-  labor: BriefingSection & { actual_hours: number | null; actual_cost: number | null; labor_pct: number | null };
+  labor: BriefingSection & {
+    actual_hours: number | null;
+    actual_cost: number | null;
+    labor_pct: number | null;
+  };
   staffing: BriefingSection & {
     published_at: string | null;
     shifts: number | null;
@@ -274,7 +313,11 @@ export type Briefing = {
     by_position: Record<string, number>;
     shift_list: BriefingShift[];
   };
-  stock: BriefingSection & { below_par_count: number | null; items: BriefingItem[]; items_without_par: number | null };
+  stock: BriefingSection & {
+    below_par_count: number | null;
+    items: BriefingItem[];
+    items_without_par: number | null;
+  };
   evidence: SousEvidence[];
   freshness: Array<Omit<Freshness, "location_id">>;
   limitations: string[];
@@ -282,9 +325,24 @@ export type Briefing = {
 };
 
 // ---- Team ----
-export type Position = { id: string; name: string; color: string; archived_at: string | null };
-export type Station = { id: string; location_id: string; name: string; archived_at: string | null };
-export type EmployeePosition = { id: string; name: string; color: string; is_primary: boolean };
+export type Position = {
+  id: string;
+  name: string;
+  color: string;
+  archived_at: string | null;
+};
+export type Station = {
+  id: string;
+  location_id: string;
+  name: string;
+  archived_at: string | null;
+};
+export type EmployeePosition = {
+  id: string;
+  name: string;
+  color: string;
+  is_primary: boolean;
+};
 export type LoginStatus = "none" | "invited" | "active";
 export type Employee = {
   id: string;
@@ -415,7 +473,10 @@ export type ScheduleResponse = {
   shifts: Shift[];
   employees: ScheduleEmployee[];
   days: ScheduleDay[];
-  week: ScheduleTotals & { reference_labor_pct: number | null; reference_period: DateRange };
+  week: ScheduleTotals & {
+    reference_labor_pct: number | null;
+    reference_period: DateRange;
+  };
   conflicts: Conflict[];
   freshness: Freshness[];
 };
@@ -449,7 +510,10 @@ export type AppNotification = {
   created_at: string;
   read_at: string | null;
 };
-export type NotificationList = { data: AppNotification[]; unread_count: number };
+export type NotificationList = {
+  data: AppNotification[];
+  unread_count: number;
+};
 
 // ---- Employee self-service (/v1/me) ----
 export type MyShift = {
@@ -484,7 +548,11 @@ export type MyWeek = {
 
 // ---- Availability and time off ----
 /** An unavailable window on a weekday (0 = Monday), location-local. No times = all day. */
-export type AvailabilityBlock = { weekday: number; start_time: string | null; end_time: string | null };
+export type AvailabilityBlock = {
+  weekday: number;
+  start_time: string | null;
+  end_time: string | null;
+};
 export type AvailabilitySet = {
   id: string;
   employee_id: string;
@@ -532,4 +600,7 @@ export type TimeOffIn = {
   end_time?: string | null;
   reason?: string;
 };
-export type RequestsInbox = { time_off: TimeOff[]; availability: AvailabilitySet[] };
+export type RequestsInbox = {
+  time_off: TimeOff[];
+  availability: AvailabilitySet[];
+};
