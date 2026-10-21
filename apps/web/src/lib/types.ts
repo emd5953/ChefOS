@@ -607,7 +607,7 @@ export type TimeOffIn = {
 export type RequestsInbox = { time_off: TimeOff[]; availability: AvailabilitySet[] };
 
 // ---- Attendance (/v1/team/attendance) ----
-export type AttendanceStatus = "upcoming" | "awaiting_data" | "on_time" | "late" | "missed";
+export type AttendanceStatus = "upcoming" | "awaiting_data" | "on_time" | "late" | "missed" | "in_progress";
 export type AttendanceShift = {
   shift_id: string;
   employee_id: string | null;

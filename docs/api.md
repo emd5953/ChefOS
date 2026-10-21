@@ -314,7 +314,7 @@ Each pending time-off item lists the published shifts it overlaps (`overlapping_
 | GET | `/v1/team/attendance?location_id&from&to` | none | `200 Attendance`. `from`/`to` are business dates, default today; at most 31 days. `404` for a location the caller doesn't manage |
 
 ```ts
-type AttendanceStatus = "upcoming" | "awaiting_data" | "on_time" | "late" | "missed";
+type AttendanceStatus = "upcoming" | "awaiting_data" | "on_time" | "late" | "missed" | "in_progress";
 type Attendance = { location_id: string; timezone: string; period: { from: string; to: string };
                     grace_minutes: 10; as_of: string | null; open_shifts_excluded: number;
                     freshness: DataFreshness[] /* timecards */;
@@ -333,7 +333,7 @@ type Attendance = { location_id: string; timezone: string; period: { from: strin
 - Compares **published** shifts with imported timecards. A timecard belongs to the same employee's shift whose window `[start − 2h, end)` holds its clock-in (nearest start wins); the rest are `unscheduled`. Open shifts count toward `scheduled_hours` but are not judged.
 - **Late:** no clock-in 10 minutes after the start (or a clock-in after that). **Missed:** none by the end. Overnight shifts belong to the business date they start on.
 - Statuses are judged as of `as_of`, the instant timecards are imported through (the location's `timecards` stream, capped at now). A shift due after it is `awaiting_data`, never late; a location without a timecard source has `as_of: null` and is never judged.
-- Actual hours are paid hours of closed timecards; an open timecard counts 0 until clock-out.
+- Closed timecards use imported paid hours. An open timecard is `in_progress`; its hours are running time from clock-in through the timecard stream's `as_of` (capped at now), since breaks are unknown until clock-out. Day actual hours include both closed paid hours and open running time.
 - **Alerts:** after every scheduled sync of a connection, late and missed shifts that started in the last 36 hours notify the location's managers (owners, admins, managers with access) as `shift_late` / `shift_missed`, linking to `/app/team/attendance`. At most one per recipient, shift, and kind.
 - `daily_labor.scheduled_hours` is the paid hours of published shifts for that day, set on each labor rebuild and refreshed on publish. Days without timecards have no `daily_labor` row.
 

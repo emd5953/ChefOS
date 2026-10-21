@@ -6,6 +6,7 @@ shift for someone it has off that day never gets a clock-in."""
 
 import uuid
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -15,6 +16,7 @@ from app.db import scoped_session
 from app.integrations import readmodels, sync
 from app.integrations.providers.square import fake_data as fd
 from app.team import attendance
+from app.team.attendance import Punch
 from app.team.demo import resolve_refs_any
 from tests.team.conftest import (
     NY,
@@ -30,6 +32,20 @@ from tests.team.conftest import (
 
 DAY = date(2026, 3, 5)  # Thursday; the clock starts at 15:00 New York
 WEEK = date(2026, 3, 2)
+
+
+def test_open_punch_running_hours_use_as_of_and_closed_punches_use_paid_hours() -> None:
+    clock_in = datetime(2026, 3, 5, 14, tzinfo=UTC)
+    as_of = clock_in + timedelta(hours=2, minutes=30)
+    open_punch = Punch(uuid.uuid4(), None, DAY, clock_in, None, Decimal("0"))
+    closed_punch = Punch(
+        uuid.uuid4(), None, DAY, clock_in - timedelta(hours=4), clock_in, Decimal("3.25")
+    )
+
+    assert attendance._hours([open_punch], as_of) == 2.5
+    assert attendance._hours([closed_punch], as_of) == 3.25
+    # Day totals sum the same closed paid hours and open running time.
+    assert attendance._hours([open_punch, closed_punch], as_of) == 5.75
 
 
 @pytest.fixture
@@ -153,15 +169,20 @@ async def test_late_missed_and_on_time_alert_managers_once(
 
     day = await _day(team_org, DAY, gm)
     status = {s["shift_id"]: (s["status"], s["minutes_late"]) for s in day["shifts"]}
-    assert status == {on_time: ("on_time", None), late: ("late", 30), missed: ("missed", None)}
+    assert status == {on_time: ("in_progress", None), late: ("late", 30), missed: ("missed", None)}
     assert day["counts"] == {
-        "on_time": 1, "late": 1, "missed": 1, "upcoming": 0, "awaiting_data": 0,
+        "on_time": 0, "late": 1, "missed": 1, "upcoming": 0, "awaiting_data": 0,
+        "in_progress": 1,
     }  # fmt: skip
     row = next(s for s in day["shifts"] if s["shift_id"] == on_time)
     assert row["clock_in"] is not None and row["clock_out"] is None  # still on the clock
     async with scoped_session(team_org.org_id) as db:
         actual = await db.scalar(
-            text("SELECT sum(paid_hours) FROM timecards WHERE business_date = :d"), {"d": DAY}
+            text("""SELECT sum(CASE WHEN clock_out IS NULL
+                                  THEN greatest(0, extract(epoch FROM (:as_of - clock_in)) / 3600)
+                                  ELSE paid_hours END)
+                     FROM timecards WHERE business_date = :d"""),
+            {"d": DAY, "as_of": now.now},
         )
     assert day["actual_hours"] == round(float(actual), 2)
     # Late 5.5h + missed 4h + open 4h, plus the on-time shift (the seller's own times).
