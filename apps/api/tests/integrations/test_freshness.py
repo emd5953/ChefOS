@@ -11,6 +11,11 @@ from app.config import get_settings
 from app.db import scoped_session
 from app.integrations import sync
 from app.integrations.freshness import location_freshness
+from app.integrations.models import (
+    IntegrationConnection,
+    IntegrationLocationLink,
+    IntegrationStream,
+)
 from app.integrations.providers.square.client import SquareAuthError, SquareTransientError
 from app.integrations.providers.square.fake_client import FakeSquareClient
 from tests.integrations.conftest import Clock, Connect
@@ -100,6 +105,43 @@ async def test_location_without_a_connection_is_not_connected(
     conn = await connect(complete=False)
     got = await statuses(conn.org_id, conn.location_id, clock.now)
     assert got == dict.fromkeys(("orders", "timecards", "catalog", "team_members"), "not_connected")
+
+
+async def test_push_freshness_uses_daily_cadence(connect: Connect, clock: Clock) -> None:
+    conn = await connect(complete=False)
+    async with scoped_session(conn.org_id) as db:
+        connection = await db.get_one(IntegrationConnection, conn.connection_id)
+        connection.provider = "push"
+        connection.status = "active"
+        db.add(
+            IntegrationLocationLink(
+                org_id=conn.org_id,
+                connection_id=connection.id,
+                external_location_id=str(conn.location_id),
+                external_name="Juniper House",
+                location_id=conn.location_id,
+                timezone="America/New_York",
+            )
+        )
+        db.add(
+            IntegrationStream(
+                org_id=conn.org_id,
+                connection_id=connection.id,
+                stream="orders",
+                last_success_at=clock.now,
+                data_as_of=clock.now,
+            )
+        )
+    assert (await statuses(conn.org_id, conn.location_id, clock.now + timedelta(hours=25)))[
+        "orders"
+    ] == "fresh"
+    assert (await statuses(conn.org_id, conn.location_id, clock.now + timedelta(hours=27)))[
+        "orders"
+    ] == "stale"
+    got = await statuses(conn.org_id, conn.location_id, clock.now)
+    assert {name: got[name] for name in ("timecards", "catalog", "team_members")} == dict.fromkeys(
+        ("timecards", "catalog", "team_members"), "not_connected"
+    )
 
 
 async def test_only_one_sync_runs_per_connection(connect: Connect, clock: Clock) -> None:

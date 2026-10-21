@@ -37,7 +37,10 @@ def stream_interval_seconds(stream: str) -> int:
 
 
 def stream_health(
-    row: IntegrationStream | None, connection_status: str, now: datetime
+    row: IntegrationStream | None,
+    connection_status: str,
+    now: datetime,
+    provider: str = "square",
 ) -> HealthStatus:
     if connection_status in ("needs_reauth", "error"):
         return "failing"
@@ -48,6 +51,8 @@ def stream_health(
     if row.last_success_at is None:
         return "pending"
     age = (now - row.last_success_at).total_seconds()
+    if provider == "push" and row.stream == "orders":
+        return "fresh" if age <= 26 * 3600 else "stale"
     return "fresh" if age <= 2 * stream_interval_seconds(row.stream) else "stale"
 
 
@@ -89,8 +94,11 @@ async def location_freshness(
     out: list[FreshnessItem] = []
     for name in FRESHNESS_STREAMS:
         s = streams.get(name)
-        health = stream_health(s, row.status, now)
-        # Never-synced streams are reported stale: there is no data to call current.
-        status = "stale" if health == "pending" else health
+        health = stream_health(s, row.status, now, row.provider)
+        if row.provider == "push" and name != "orders":
+            status = "not_connected"  # push carries sales totals only
+        else:
+            # Never-synced streams are reported stale: there is no data to call current.
+            status = "stale" if health == "pending" else health
         out.append(FreshnessItem(name, location_id, s.data_as_of if s else None, status))
     return out
