@@ -69,7 +69,7 @@ The API is one deployable, organized by module. Modules talk through service int
 
 ```
 Organization 1─* Location 1─* {Employee, Shift, Timecard, SalesOrder, InventoryLevel, Count, PurchaseOrder, WasteEntry}
-Organization 1─* {User, Supplier, Item, Recipe, MenuItem, IntegrationConnection}
+Organization 1─* {User, Supplier, Item, Recipe, MenuItem, IntegrationConnection, ApiKey}
 MenuItem *─0..1 Recipe *─* Item (via RecipeIngredient, with units)
 SalesOrder 1─* SalesOrderLine *─0..1 MenuItemVariant
 Employee 0..1─1 User      (employees may not have logins)

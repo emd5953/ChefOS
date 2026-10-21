@@ -20,7 +20,7 @@ Phase 4 establishes that operational source of truth. Counts and receiving must 
 
 ## Non-goals
 
-- INV-5 waste and yield logging, INV-6 inter-location transfers, INV-7 invoice capture and AP reconciliation, and INV-8 staff 86 broadcasts; these remain Phase 6 work.
+- INV-5 yield logging (waste logging was built in Phase 6, [breadth spec](breadth.md) B4: audited entries, stock decremented once, date-filtered log; station and shift columns exist but the UI doesn't set them yet), INV-6 inter-location transfers, INV-7 invoice capture and AP reconciliation, and INV-8 staff 86 broadcasts; these remain Phase 6 work.
 - Theoretical usage from POS sales, depletion projections, or actual-vs-theoretical food cost (COM-6); recipes and plate cost are the foundation, but usage accounting is later work.
 - Supplier integrations, automatic ordering, invoice matching, multi-currency purchasing, and POS writeback.
 - Lot tracking, expiry, nutritional data, recipe sub-recipes, and production/prep batches.

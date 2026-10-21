@@ -31,7 +31,7 @@ cd apps/web && npm install && npm run dev
 
 Open http://localhost:3000/login and sign in as `owner@chefos.local` / `ChefOS-demo-2026!`. The demo also seeds a manager (`gm@chefos.local`) and an employee linked to the imported Square team member Maya Okafor (`maya@chefos.local`), same password, plus a published schedule for the current week.
 
-**Walkthrough:** Overview (live today, last 7 days vs previous, 30-day trend) → Sales (any range, compare to previous period or last year, channels, labor %) → Menu items → Integrations (sync health, backfill, mapping issues, sync runs) → Team (employees from Square, invitations) → Schedule (next week: copy last week, watch projected labor % against the forecast, publish) → log in as `maya@chefos.local` at phone width for `/my` (schedule, time off, availability, alerts) → back as the GM, approve the request in Team → Requests. New orders from the simulated POS arrive every minute during service hours (America/New_York). Inventory: stock/par review → phone-sized count and exception review → purchase order/receipt → recipe plate cost.
+**Walkthrough:** Overview (live today, last 7 days vs previous, 30-day trend) → Sales (any range, compare to previous period or last year, channels, labor %) → Menu items → Integrations (sync health, backfill, mapping issues, sync runs) → Team (employees from Square, invitations) → Schedule (next week: copy last week, watch projected labor % against the forecast, publish) → log in as `maya@chefos.local` at phone width for `/my` (schedule, time off, availability, alerts) → back as the GM, approve the request in Team → Requests. New orders from the simulated POS arrive every minute during service hours (America/New_York). Inventory: stock/par review → phone-sized count and exception review → purchase order/receipt → recipe plate cost. Phase 6: Sous → daily briefing (yesterday's sales and labor, today's staffing, items below par; works with the model off) → Menu items category mix → Inventory waste log → Team → Attendance (the GM's late and missed clock-in alerts for today) → Integrations API keys, then push a day's totals with `curl` (see [push API](docs/api.md)).
 
 | URL | What |
 | --- | --- |
@@ -54,5 +54,7 @@ Other targets: `make test`, `make lint`, `make smoke`, `make down` (keep data), 
 | [Spec: Integration layer](docs/specs/integration-layer.md) | Square connector, ingestion pipeline, freshness |
 | [Spec: Sous](docs/specs/sous.md) | Assistant design, tools, approval path |
 | [Spec: Team](docs/specs/team.md) | Employees, logins, schedules, forecast, requests, employee mobile view |
+| [Spec: Inventory](docs/specs/inventory.md) | Catalog, counts, purchasing, receiving, recipes, plate cost |
+| [Spec: Breadth](docs/specs/breadth.md) | Phase 6: Sous breadth, daily briefing, product mix, waste, push API, clock-in alerts, follow-ups |
 | [Research: ChefOS](docs/research/chefos-public-site.md) | Competitive research on the reference product |
 | [Interview prep](docs/interview-prep.md) | Engineering topics mapped to this codebase, and production gaps |

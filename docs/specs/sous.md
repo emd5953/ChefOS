@@ -131,11 +131,11 @@ On approval, the command endpoint reauthenticates the approver, checks draft exp
 3. Tracing, rate limits, timeouts, and the evaluation set in CI.
 4. Read-only demo run against seeded data. Measure unsupported questions, freshness limitations, evidence quality, and latency.
 5. Draft-and-approve for single shift add/adjust.
-6. Expand tools based on observed questions. Daily briefing.
+6. Expand tools based on observed questions. Daily briefing (built 2026-10-21 as a deterministic, model-free view, `GET /v1/sous/briefing`; see [breadth spec](breadth.md) B2).
 
 ## v1 build contract (milestones 1–4)
 
-v1 tools cover Commerce and data freshness. `get_labor_summary`, `get_schedule` and `find_items_below_par` were added once Team and Inventory existed (see "Team and Inventory reads" below). `get_waste_summary` still waits for waste entries.
+v1 tools cover Commerce and data freshness. `get_labor_summary`, `get_schedule` and `find_items_below_par` were added once Team and Inventory existed (see "Team and Inventory reads" below). `get_waste_summary` is not built yet; waste entries now exist (`GET /v1/inventory/waste`), so it is the next Inventory tool.
 
 ### HTTP
 
