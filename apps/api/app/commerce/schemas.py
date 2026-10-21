@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 Channel = Literal["dine_in", "pickup", "delivery", "online", "other"]
 CHANNELS: tuple[Channel, ...] = ("dine_in", "pickup", "delivery", "online", "other")
@@ -74,10 +74,18 @@ class ItemOut(BaseModel):
     share_pct: float
 
 
+class CategoryMixOut(BaseModel):
+    category: str
+    net_sales: int
+    share_pct: float
+
+
 class ItemsOut(BaseModel):
     currency: Currency = "USD"
-    items: list[ItemOut]
-    unmapped_net_sales: int
+    total_net_sales: int = 0
+    categories: list[CategoryMixOut] = Field(default_factory=list)
+    items: list[ItemOut] = Field(default_factory=list)
+    unmapped_net_sales: int = 0
 
 
 class HourOut(BaseModel):

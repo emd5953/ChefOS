@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from typing import Any
 
 import pytest
+from sqlalchemy import text
 
 from app.commerce import service as commerce
 from app.db import scoped_session
@@ -130,7 +131,7 @@ async def test_summary_change_percentages(loaded: Connected) -> None:
 
 async def test_items_shape(loaded: Connected) -> None:
     body = await get(loaded, "items", **{"from": "2026-03-03", "to": "2026-03-07", "limit": 5})
-    assert set(body) == {"currency", "items", "unmapped_net_sales"}
+    assert set(body) == {"currency", "total_net_sales", "categories", "items", "unmapped_net_sales"}
     assert 0 < len(body["items"]) <= 5
     for it in body["items"]:
         assert set(it) == {"name", "category", "quantity", "net_sales", "share_pct"}
@@ -138,6 +139,74 @@ async def test_items_shape(loaded: Connected) -> None:
     assert nets == sorted(nets, reverse=True)
     assert body["unmapped_net_sales"] > 0  # the ad-hoc "Open Food" line
     assert body["items"][0]["category"] != "Uncategorized"
+    assert (
+        sum(c["net_sales"] for c in body["categories"]) + body["unmapped_net_sales"]
+        == body["total_net_sales"]
+    )
+
+
+async def test_product_mix_reconciles_order_lines_and_category_filter(loaded: Connected) -> None:
+    async with scoped_session(loaded.org_id) as db:
+        await db.execute(
+            text("""
+UPDATE sales_order_lines SET net=-abs(net)
+WHERE id=(SELECT id FROM sales_order_lines WHERE org_id=:org AND location_id=:loc
+AND menu_item_variant_id IS NOT NULL LIMIT 1)
+"""),
+            {"org": loaded.org_id, "loc": loaded.location_id},
+        )
+    body = await get(loaded, "items", **{"from": "2026-03-03", "to": "2026-03-07", "limit": 200})
+    async with scoped_session(loaded.org_id) as db:
+        row = (
+            await db.execute(
+                text("""
+SELECT COALESCE(sum(net), 0) AS total,
+       COALESCE(sum(net) FILTER (WHERE menu_item_variant_id IS NULL), 0) AS unmapped
+FROM sales_order_lines
+WHERE org_id=:org AND location_id=:loc AND business_date BETWEEN :f AND :t
+"""),
+                {
+                    "org": loaded.org_id,
+                    "loc": loaded.location_id,
+                    "f": date(2026, 3, 3),
+                    "t": date(2026, 3, 7),
+                },
+            )
+        ).one()
+    assert body["total_net_sales"] == int(row.total)
+    assert body["unmapped_net_sales"] == int(row.unmapped)
+    assert sum(c["net_sales"] for c in body["categories"]) + body["unmapped_net_sales"] == int(
+        row.total
+    )
+    category = body["categories"][0]["category"]
+    selected = await get(
+        loaded,
+        "items",
+        **{"from": "2026-03-03", "to": "2026-03-07", "limit": 200, "category": category},
+    )
+    assert selected["items"] and all(item["category"] == category for item in selected["items"])
+    assert [item["net_sales"] for item in selected["items"]] == sorted(
+        (item["net_sales"] for item in selected["items"]), reverse=True
+    )
+
+
+async def test_product_mix_empty_period_and_current_category_mapping(loaded: Connected) -> None:
+    empty = await get(loaded, "items", **{"from": "2020-01-06", "to": "2020-01-06"})
+    assert empty["total_net_sales"] == empty["unmapped_net_sales"] == 0
+    assert empty["categories"] == empty["items"] == []
+    async with scoped_session(loaded.org_id) as db:
+        await db.execute(
+            text("""
+UPDATE menu_items SET category='Milestone special'
+WHERE org_id=:org AND id=(SELECT mi.id FROM menu_items mi JOIN menu_item_variants v ON v.menu_item_id=mi.id
+JOIN sales_order_lines l ON l.menu_item_variant_id=v.id
+WHERE l.org_id=:org AND l.location_id=:loc LIMIT 1)
+"""),
+            {"org": loaded.org_id, "loc": loaded.location_id},
+        )
+    changed = await get(loaded, "items", **{"from": "2026-03-03", "to": "2026-03-07", "limit": 200})
+    assert any(item["category"] == "Milestone special" for item in changed["items"])
+    assert any(category["category"] == "Milestone special" for category in changed["categories"])
 
 
 async def test_today_uses_the_location_clock_and_trickles(loaded: Connected, clock: Clock) -> None:

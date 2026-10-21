@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.commerce.schemas import (
     CHANNELS,
+    CategoryMixOut,
     ChangeOut,
     ChannelShare,
     DailyOut,
@@ -242,16 +243,59 @@ ORDER BY net DESC, name
 LIMIT :n
 """)
 
+_ITEMS_CATEGORIES = text("""
+SELECT COALESCE(NULLIF(mi.category, ''), 'Uncategorized') AS category, sum(l.net) AS net
+FROM sales_order_lines l
+JOIN menu_item_variants v ON v.id = l.menu_item_variant_id
+JOIN menu_items mi ON mi.id = v.menu_item_id
+WHERE l.org_id = :org AND l.location_id = :loc AND l.business_date BETWEEN :f AND :t
+GROUP BY 1
+ORDER BY net DESC, category ASC
+""")
+
+
+_ITEMS_IN_CATEGORY = text("""
+SELECT COALESCE(mi.name, l.name) AS name,
+       COALESCE(NULLIF(mi.category, ''), 'Uncategorized') AS category,
+       sum(l.quantity) AS quantity, sum(l.net) AS net
+FROM sales_order_lines l
+LEFT JOIN menu_item_variants v ON v.id = l.menu_item_variant_id
+LEFT JOIN menu_items mi ON mi.id = v.menu_item_id
+WHERE l.org_id = :org AND l.location_id = :loc AND l.business_date BETWEEN :f AND :t
+  AND COALESCE(NULLIF(mi.category, ''), 'Uncategorized') = :category
+GROUP BY COALESCE(mi.id::text, 'ad-hoc:' || l.name), 1, 2
+ORDER BY net DESC, name ASC
+LIMIT :n
+""")
+
 
 async def items(
-    db: AsyncSession, org_id: uuid.UUID, loc: Location, first: date, last: date, limit: int
+    db: AsyncSession,
+    org_id: uuid.UUID,
+    loc: Location,
+    first: date,
+    last: date,
+    limit: int,
+    category: str | None = None,
 ) -> ItemsOut:
     validate_range(first, last)
     p = {"org": org_id, "loc": loc.id, "f": first, "t": last}
     totals = (await db.execute(_ITEMS_TOTAL, p)).one()
     total = int(totals.total)
-    rows = await db.execute(_ITEMS_TOP, {**p, "n": limit})
+    category_rows = await db.execute(_ITEMS_CATEGORIES, p)
+    categories = [
+        CategoryMixOut(
+            category=r.category,
+            net_sales=int(r.net),
+            share_pct=round(int(r.net) / total * 100, 1) if total > 0 else 0.0,
+        )
+        for r in category_rows
+    ]
+    item_query = _ITEMS_TOP if category is None else _ITEMS_IN_CATEGORY
+    rows = await db.execute(item_query, {**p, "n": limit, "category": category})
     return ItemsOut(
+        total_net_sales=total,
+        categories=categories,
         items=[
             ItemOut(
                 name=r.name,
