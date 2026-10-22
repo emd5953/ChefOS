@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 if TYPE_CHECKING:
+    from app.sous.llm import LLMProvider, LLMReply, Message, ProviderHealth
     from app.sous.schemas import SousAnswer
 
 CASES_PATH = Path(__file__).with_name("cases.yaml")
@@ -355,6 +356,8 @@ class CaseResult:
     error: str | None = None
     ms: int = 0
     request_id: str = ""
+    tool_uses: list[dict[str, Any]] = field(default_factory=list)
+    model_replies: list[dict[str, Any]] = field(default_factory=list)
     limitations: list[str] = field(default_factory=list)
 
     @property
@@ -468,6 +471,7 @@ def score(case: dict[str, Any], res: CaseResult, answer: SousAnswer) -> None:
     res.request_id = answer.request_id
     res.limitations = list(answer.limitations)
     res.tools_called = [t.name for t in answer.tools_used if t.ok]
+    res.tool_uses = [t.model_dump(mode="json") for t in answer.tools_used]
     res.evidence_rows = len(answer.evidence)
     res.kind_ok = answer.kind in res.expected_kinds
     res.tools_ok = tools_satisfied(res.tools_expected, res.tools_called)
@@ -507,7 +511,32 @@ async def preflight() -> bool:
     return health.reachable and health.model_pulled
 
 
-async def run_case(case: dict[str, Any], env: Env, provider: Any, now: datetime) -> CaseResult:
+class RecordingProvider:
+    """Capture raw replies for eval diagnosis only; delegate every request to the live provider.
+
+    Reports already contain questions and expected facts. Run against synthetic fixtures;
+    this wrapper is never installed in application request handling or production logging.
+    """
+
+    def __init__(self, provider: LLMProvider, replies: list[dict[str, Any]]) -> None:
+        self.provider = provider
+        self.replies = replies
+        self.name = provider.name
+        self.model = provider.model
+        self.breaker = provider.breaker
+
+    async def chat(self, messages: list[Message], tools: list[dict[str, Any]]) -> LLMReply:
+        reply = await self.provider.chat(messages, tools)
+        self.replies.append(asdict(reply))
+        return reply
+
+    async def health(self) -> ProviderHealth:
+        return await self.provider.health()
+
+
+async def run_case(
+    case: dict[str, Any], env: Env, provider: LLMProvider, now: datetime
+) -> CaseResult:
     from app.sous.orchestrator import ask
     from app.sous.schemas import AskIn, HistoryTurn
     from app.sous.tools import TOOL_NAMES, run_tool
@@ -527,10 +556,11 @@ async def run_case(case: dict[str, Any], env: Env, provider: Any, now: datetime)
     await compute_expected(case, res, run_tool, env, now)
     req = AskIn(question=question, location_id=env.loc.id)
     history = [HistoryTurn.model_validate(t) for t in case.get("history", [])]
+    observed = RecordingProvider(provider, res.model_replies)
     started = time.perf_counter()
     try:
         answer = await ask(
-            env.ctx, env.loc, req, provider, now=now, open_session=env, history=history
+            env.ctx, env.loc, req, observed, now=now, open_session=env, history=history
         )
     except Exception as exc:
         res.ms = round((time.perf_counter() - started) * 1000)

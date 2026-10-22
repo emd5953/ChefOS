@@ -42,6 +42,11 @@ Open http://localhost:3000/login and sign in as `owner@chefos.local` / `ChefOS-d
 
 Other targets: `make test`, `make lint`, `make smoke`, `make down` (keep data), `make reset` (wipe data). To use a real Square sandbox, set `SQUARE_MODE=sandbox` and the `SQUARE_*` credentials in `.env`.
 
+If PostgreSQL port 5432 is already occupied, set `POSTGRES_PORT` in `.env` and update both
+host database URLs to that port. Tests use `TEST_DB_HOST=localhost:<port>`. Container-to-container
+connections retain port 5432. Windows desktop evaluation setup and the completed **106/106**
+live-model quality gate are documented in the [evaluation report](apps/api/evals/sous/results/2026-10-22.md).
+
 ## Documentation
 
 | Doc | Purpose |

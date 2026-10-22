@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.commerce import service as commerce
 from app.commerce.schemas import DayOut
 from app.errors import validation_error
+from app.formatting import local_timestamp
 from app.identity.models import Location
 from app.integrations.freshness import FreshnessItem, location_freshness
 from app.integrations.providers.square.business_date import business_date, get_zone
@@ -390,11 +391,7 @@ def _limitations(
             if label is None:
                 continue
             if f.status == "stale":
-                when = (
-                    f.data_as_of.astimezone(zone).strftime("%b %-d, %-I:%M %p")
-                    if f.data_as_of
-                    else "never"
-                )
+                when = local_timestamp(f.data_as_of.astimezone(zone)) if f.data_as_of else "never"
                 limits.append(f"{label} data is stale (last updated {when}).")
             elif f.status == "failing":
                 limits.append(f"{label} sync is failing; figures may be incomplete.")

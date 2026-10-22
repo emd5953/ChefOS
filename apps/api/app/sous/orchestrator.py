@@ -374,8 +374,20 @@ async def _model_run(
     messages: list[Message] = [
         {"role": "system", "content": prompt.build_system_prompt(loc, now)},
         *({"role": t.role, "content": t.content} for t in history),
-        {"role": "user", "content": req.question},
     ]
+    if history:
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "The next user message continues this conversation in a new turn. "
+                    "Use the prior questions to resolve its metric and period. No tools "
+                    "have run for THIS turn and no fact IDs exist yet. Fetch fresh tool "
+                    "facts before answering, including when confirming a previous figure."
+                ),
+            }
+        )
+    messages.append({"role": "user", "content": req.question})
     specs = tools.tool_specs()
     used: list[ToolUse] = []
     results: list[ToolResult] = []
@@ -450,10 +462,18 @@ async def _model_run(
             {
                 "role": "user",
                 "content": (
-                    "Your reply could not be verified. Return only JSON: "
-                    '{"kind":"answer","claims":["exact fact ID from this question"]}. '
-                    "Do not include prose, values or labels. Call a tool if you need facts. "
-                    'Otherwise return {"kind":"clarify","reason":"period"} or '
+                    "Your reply could not be verified. "
+                    + (
+                        "No facts exist for this question. You must call a tool to fetch the "
+                        "requested metric and period before returning any answer claims. "
+                        "IDs in examples and history are not available facts. "
+                        if not facts
+                        else "Return only JSON with kind and claims. Start with { and end "
+                        "with }. Do not prefix it with Answer: or include markdown, prose, "
+                        "values or labels. Choose only exact IDs from the tool facts for the "
+                        "requested metric and period. "
+                    )
+                    + 'Otherwise return {"kind":"clarify","reason":"period"} or '
                     '{"kind":"unsupported"}.'
                 ),
             }

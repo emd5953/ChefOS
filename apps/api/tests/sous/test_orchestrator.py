@@ -134,7 +134,7 @@ async def test_history_is_replayed_between_system_and_question(
         {"role": "assistant", "content": "Hello"},
     ]
     await ask(loaded, clock, fake, "And now?", history=history)
-    assert [(m["role"], m["content"]) for m in fake.calls[0][1:]] == [
+    assert [(m["role"], m["content"]) for m in fake.calls[0] if m["role"] != "system"] == [
         ("user", "Hi"),
         ("assistant", "Hello"),
         ("user", "And now?"),
@@ -166,7 +166,7 @@ async def test_unverified_prose_is_retried_with_the_claim_contract(
     assert a.kind == "answer" and dollars(s.current.net_sales) in a.answer
     retry = fake.calls[2]
     assert retry[-2] == {"role": "assistant", "content": "Net sales were $1.23."}
-    assert retry[-1]["role"] == "user" and "exact fact ID" in retry[-1]["content"]
+    assert retry[-1]["role"] == "user" and "exact IDs" in retry[-1]["content"]
 
 
 async def test_second_ungrounded_answer_falls_back_to_evidence_only(

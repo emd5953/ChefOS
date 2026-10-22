@@ -220,6 +220,11 @@ Config:
   facts, preserving metric, entity,
   period, sign and unit. Wrong-kind responses stay in the denominator. A permitted refusal in
   a `kind_any` injection case has no value requirement.
+- The desktop run on 2026-10-22 completed **106/106 passing cases**, **90/90 semantic values**,
+  and **74/74 evidence coverage**, with no errors, fallbacks or authorization violations.
+  See the [full report](../../apps/api/evals/sous/results/2026-10-22.md) for the exact model
+  digest, f16 runtime, failures/fixes, regression checks and remaining limitations. Eval
+  reports also record raw model replies and tool arguments for diagnosis; use synthetic data.
 - For an isolated synthetic dataset without Temporal, point `DATABASE_URL` and
   `MIGRATIONS_DATABASE_URL` at a dedicated database ending in `_eval`, apply migrations, then
   run `python -m evals.sous.seed`. It uses 400 days of the existing Square simulator through
@@ -337,6 +342,13 @@ kinds cannot bypass the output boundary. External names are quoted and escaped i
 server-authored facts; name filtering remains defense in depth. Unfinished `<think>` blocks
 are discarded. Tool/date selection and relevance to the user's intent still require live-model
 evaluation; truthful facts alone do not prove the question was interpreted correctly.
+
+Prompt `sous-prompt-11` clarifies the raw JSON contract and restricts selections to requested
+metrics. A server-authored reminder after stored history tells the model that the new turn
+has no facts yet; it must fetch current facts using the metric/period from prior questions.
+Repair feedback distinguishes missing current facts from malformed selections. The renderer
+still requires exact current-question IDs and discards all model-authored prose. Freshness,
+inventory and briefing timestamps use portable date formatting on Windows and Unix.
 
 Migration `0014` adds `sous_conversations` and `sous_turns`. Both require organization AND user
 scope in PostgreSQL RLS. Conversations bind one location; even another owner in the same org

@@ -56,7 +56,7 @@ async def test_followups_receive_only_committed_server_history(
         second = (await post(bare, payload)).json()
     assert second["conversation_version"] == 2
     assert second["conversation_id"] == first["conversation_id"]
-    assert [(m["role"], m["content"]) for m in fake.calls[1][1:]] == [
+    assert [(m["role"], m["content"]) for m in fake.calls[1] if m["role"] != "system"] == [
         ("user", "How were sales?"),
         ("assistant", first["answer"]),
         ("user", "Yesterday"),

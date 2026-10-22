@@ -200,6 +200,7 @@ async def test_provider_errors_are_recorded_as_failed_cases(
 
     from app.errors import ProblemError
     from app.sous import orchestrator
+    from app.sous.llm import FakeProvider
     from evals.sous.run import Env, run_case
 
     async def unavailable(*args: object, **kwargs: object) -> None:
@@ -214,9 +215,34 @@ async def test_provider_errors_are_recorded_as_failed_cases(
         "question": "Sales?",
         "expect": {"kind": "answer", "tools": []},
     }
-    r = await run_case(case, env, None, datetime.now(UTC))
+    r = await run_case(case, env, FakeProvider([]), datetime.now(UTC))
     assert r.error and "Model unavailable" in r.error and not r.passed
     assert summarize([r])["errors"] == 1
+
+
+async def test_eval_recording_preserves_provider_calls_and_raw_replies() -> None:
+    from app.sous.llm import FakeProvider, LLMReply, ToolCall
+    from evals.sous.run import RecordingProvider
+
+    reply = LLMReply(tool_calls=[ToolCall("get_sales_summary", {"from": "2026-10-21"})])
+    source = FakeProvider([reply])
+    recorded: list[dict[str, Any]] = []
+    provider = RecordingProvider(source, recorded)
+    messages = [{"role": "user", "content": "Confirm yesterday's sales"}]
+    specs = [{"type": "function"}]
+    assert await provider.chat(messages, specs) is reply
+    assert source.calls == [messages]
+    assert recorded == [
+        {
+            "content": "",
+            "tool_calls": [
+                {"name": "get_sales_summary", "arguments": {"from": "2026-10-21"}},
+            ],
+        }
+    ]
+    assert provider.name == source.name and provider.model == source.model
+    assert provider.breaker is source.breaker
+    assert await provider.health() == await source.health()
 
 
 def test_freshness_metadata_is_grounded_without_numeric_cards() -> None:

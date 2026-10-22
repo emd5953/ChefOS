@@ -15,7 +15,7 @@ Engineering topics this codebase demonstrates, each mapped to what we actually b
 | Grounding and hallucination control | The model selects fact IDs; code renders each metric, period, entity, sign and unit. Strict validation, one retry, then the evidence table only. |
 | Model vs. system of record | We rejected text-to-SQL: tenant isolation would depend on the model writing the right query. |
 | Deterministic guardrails around a non-deterministic component | Authorization, metrics, date ranges (precomputed in the prompt) and evidence are all code. |
-| Prompt engineering and versioning | `PROMPT_VERSION` (`sous-prompt-8`) is recorded on every answer. |
+| Prompt engineering and versioning | `PROMPT_VERSION` (`sous-prompt-11`) is recorded on every answer. |
 | Evals | 53-case golden set with live-computed expectations; correctness, grounding, kind accuracy, authorization violations, latency (`make sous-eval`). Found the Manhattan/Brooklyn and date-range bugs. |
 | Prompt injection | User text and POS text are data inside tool results; injection cases are in the eval and tests. Proposed next layer: [injection hardening](specs/sous-injection-hardening.md). |
 | Model abstraction (provider pattern) | `LLMProvider` interface: Ollama locally, `FakeProvider` in tests, a hosted model is a config swap. |
@@ -163,13 +163,16 @@ test, live Square certification or production load test.
 
 ### Remaining release blockers
 
-1. **Complete live-model intent evaluation (P1).** Prompt 8's live `qwen3:8b` smoke passed
-   5/5 cases; the repeated full run reached 16/106 with all completed cases passing before
-   the user paused local inference to move to a 64 GB desktop. The gate remains incomplete.
-   [Results and desktop command](../apps/api/evals/sous/results/2026-10-22.md) preserve runtime
-   metadata and every completed case. The gate now checks complete semantic facts and fails
-   on errors, unresolved expectations, fallback responses and incomplete runs. Complete both
-   repeats across all 53 cases before treating model quality as a release pass.
+1. **Model coverage beyond the synthetic fixture (P1).** The desktop live `qwen3:8b` gate
+   passed **106/106 cases**, 53/53 in each repeat, with prompt 11 and f16 cache. Semantic
+   values passed 90/90, evidence coverage 74/74, with zero errors, fallbacks, unresolved
+   expectations or authorization violations. Windows date formatting and poisoned-history
+   selection failures were fixed without changing the case set or thresholds.
+   [Results and desktop command](../apps/api/evals/sous/results/2026-10-22.md) preserve the
+   initial failure, final full report, actual model digest and runtime. Two repeats on one
+   synthetic dataset do not establish broader model accuracy or production readiness.
+   The model can still include extra truthful comparisons; expected facts come from the
+   same tools and do not independently audit their arithmetic.
    Retention is implemented in migration 0015: 30 days from creation after an answer, 24 hours
    for unanswered conversations, with bounded hourly cleanup that protects active requests.
 
@@ -193,7 +196,8 @@ test, live Square certification or production load test.
    concurrent webhook/backfill workloads before narrowing locks.
 6. **Observability and release evidence (P2).** Existing spans record tool/question timings
    and outcome shape, but there is no demonstrated alerting, token-cost accounting, model
-   digest pinning, or a completed full live-model quality gate. Track timeouts, saturation, tool failures,
+   digest pinning, or production-load validation. The complete local live-model quality gate
+   is now recorded. Track timeouts, saturation, tool failures,
    evidence-only answers, semantic eval results and p95 latency without recording sensitive
    prompt/tool contents by default. Verify sandbox Square and deployed SSE disconnect behavior.
 
@@ -222,5 +226,13 @@ format check, strict mypy (97 source files), and `git diff --check` passed. Migr
 was also checked against pre-existing completed/unanswered rows in a separate database,
 including backfill, purge, downgrade and re-upgrade. The initial concurrent model/test run
 hit the simulator's 60-second performance budget (83.98 seconds); that run was interrupted
-and the full suite passed once the competing model was stopped. The live full-model gate is
-still pending on the desktop, as documented in the linked report above.
+and the full suite passed once the competing model was stopped. These laptop live-model
+attempts were incomplete; the subsequent desktop run passed the complete gate as documented
+in the linked report above.
+
+Desktop follow-up (2026-10-22): **630 backend tests passed** in 475.16 seconds, including
+the date-formatting and current-turn fact regressions. Ruff, formatting (163 files), strict
+mypy (98 source files), frontend lint/typecheck/build, schema drift, `git diff --check`, and
+the HTTP → Temporal → SQL/Jaeger smoke test passed. The full live-model run passed **106/106**
+with the unchanged 53-case set and thresholds. Exact runtime, JSON reports, test output and
+remaining limitations are in the [desktop report](../apps/api/evals/sous/results/2026-10-22.md).

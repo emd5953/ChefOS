@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.commerce import service
 from app.commerce.models import DailyLabor
 from app.commerce.schemas import FreshnessOut, Totals
+from app.formatting import local_timestamp
 from app.identity.models import Location
 from app.integrations.freshness import FreshnessItem, location_freshness
 from app.integrations.providers.square.business_date import business_date, get_zone
@@ -486,9 +487,7 @@ async def _freshness(
                     "stream": f.stream,
                     "status": f.status,
                     "updated_at_local": (
-                        f.data_as_of.astimezone(tz).strftime("%b %-d, %-I:%M %p")
-                        if f.data_as_of
-                        else None
+                        local_timestamp(f.data_as_of.astimezone(tz)) if f.data_as_of else None
                     ),
                     "minutes_since_update": (
                         int((now - f.data_as_of).total_seconds() // 60) if f.data_as_of else None
@@ -824,7 +823,7 @@ async def _below_par(
         items_shown=len(items),
         items_without_par=len(no_par),
         without_par_names=without,
-        stock_as_of_local=as_of.astimezone(zone).strftime("%b %-d, %-I:%M %p") if as_of else None,
+        stock_as_of_local=local_timestamp(as_of.astimezone(zone)) if as_of else None,
     )
     notes: list[str] = []
     if not rows:

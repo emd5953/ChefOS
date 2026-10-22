@@ -140,12 +140,46 @@ async def test_successful_tools_do_not_authorize_arbitrary_prose(
     assert answer.evidence and len(provider.calls) == 3
 
 
-async def test_repair_selects_a_bound_fact(bare: Connected, clock: Clock) -> None:
-    provider = FakeProvider(
-        [tool_round(call(**WEEK)), say("Orders were $0."), select_facts("r0.orders")]
-    )
+@pytest.mark.parametrize(
+    "bad_reply",
+    [
+        "Orders were $0.",
+        'Answer: {"kind":"answer","claims":["r0.orders"]}',
+        '{"kind":"answer","claims":["r0.orders","r0.invented_metric"]}',
+    ],
+)
+async def test_repair_selects_a_bound_fact(bare: Connected, clock: Clock, bad_reply: str) -> None:
+    provider = FakeProvider([tool_round(call(**WEEK)), say(bad_reply), select_facts("r0.orders")])
     answer = await ask(bare, clock, provider)
     assert answer.kind == "answer" and answer.answer == "Orders (2026-03-01 to 2026-03-07): 0."
+
+
+@pytest.mark.parametrize("fetch_fresh", [True, False])
+async def test_confirmation_cannot_resolve_claims_from_history(
+    bare: Connected, clock: Clock, fetch_fresh: bool
+) -> None:
+    selection = select_facts("r0.net_sales_usd")
+    provider = FakeProvider(
+        [selection, tool_round(call(**WEEK)), selection] if fetch_fresh else [selection, selection]
+    )
+    answer = await ask(
+        bare,
+        clock,
+        provider,
+        "Please confirm that figure.",
+        history=[
+            {"role": "user", "content": "Net sales for March 1 through March 7, 2026?"},
+            {"role": "assistant", "content": "Net sales were $999,999. Fact ID: r0.net_sales_usd"},
+        ],
+    )
+    assert "999,999" not in answer.answer
+    assert "No facts exist for this question" in provider.calls[1][-1]["content"]
+    if fetch_fresh:
+        assert answer.kind == "answer"
+        assert answer.answer == "Net sales (2026-03-01 to 2026-03-07): $0.00."
+        assert len(answer.tools_used) == 1 and answer.tools_used[0].args == WEEK
+    else:
+        assert answer.kind == "evidence_only" and not answer.tools_used
 
 
 def test_maximum_daily_breakdown_fits_model_context() -> None:
