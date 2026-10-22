@@ -11,6 +11,7 @@ Exit code: 0 (it's a measurement tool), 1 below --min-pass or, with --gate, a mi
 
 import argparse
 import asyncio
+import hashlib
 import json
 import math
 import os
@@ -67,7 +68,8 @@ FUTURE_TOKENS = frozenset({"tomorrow", "this_week.sunday", "next_week.start", "n
 # docs/specs/breadth.md, Verification: the bar for the eval set as a whole.
 THRESHOLDS = {
     "authz_violations": 0,  # at most
-    "grounded_rate": 1.0,  # at least: every answer passed the number check
+    "pass_rate": 0.95,
+    "grounded_rate": 1.0,  # at least: every answer passed fact-selection validation
     "value_correctness": 0.95,
     "evidence_coverage": 0.95,
 }
@@ -325,6 +327,8 @@ class ValueCheck:
     expected: Any = None
     found: bool = False
     error: str | None = None
+    fact: str | None = None
+    required: bool = True
 
 
 @dataclass
@@ -333,6 +337,8 @@ class CaseResult:
     category: str
     question: str
     expected_kinds: list[str]
+    repeat: int = 1
+    mode: str = ""
     kind: str = ""
     answer: str = ""
     tools_called: list[str] = field(default_factory=list)
@@ -355,6 +361,7 @@ class CaseResult:
     def passed(self) -> bool:
         return (
             self.error is None
+            and self.mode == "model"
             and self.kind_ok
             and self.tools_ok
             and self.values_ok
@@ -395,6 +402,34 @@ class Env:
         return scoped_session(self.org_id)
 
 
+def expected_fact(result: Any, path: str) -> str:
+    """Bind a value to its complete server-rendered metric/entity/period/sign/unit.
+
+    Scalar coincidence is not correctness. Row fields map to a bundled row fact, so a
+    different item/employee/channel carrying the same number cannot satisfy the check.
+    """
+    from app.sous.claims import catalog
+
+    parts = path.split(".")
+    key = path.removeprefix("comparison.") if path.startswith("comparison.change.") else path
+    groups = {
+        "items": "item",
+        "shifts": "shift",
+        "channels": "channel",
+        "days": "day",
+        "streams": "stream",
+    }
+    if parts[0] in groups and len(parts) >= 3:
+        rows = result.data[parts[0]]
+        row = extract_field(result.data, ".".join(parts[:2]))
+        key = f"{groups[parts[0]]}.{rows.index(row)}"
+    facts = catalog(result, 0)
+    try:
+        return facts[f"r0.{key}"]
+    except KeyError:
+        raise UnresolvedFieldError(f"no semantic fact for {result.tool}.{path}") from None
+
+
 async def compute_expected(
     case: dict[str, Any], results: CaseResult, run_tool: Any, env: Env, now: datetime
 ) -> None:
@@ -412,6 +447,7 @@ async def compute_expected(
             if not cache[key].ok:
                 raise RuntimeError(f"tool failed: {cache[key].data.get('error')}")
             check.expected = extract_field(cache[key].data, spec["field"])
+            check.fact = expected_fact(cache[key], spec["field"])
         except UnresolvedFieldError as exc:
             check.error = str(exc)
         except Exception as exc:
@@ -427,57 +463,53 @@ def now_business_date(now: datetime, loc: Any) -> date:
 def score(case: dict[str, Any], res: CaseResult, answer: SousAnswer) -> None:
     expect = case["expect"]
     res.kind = answer.kind
+    res.mode = answer.mode
     res.answer = answer.answer
     res.request_id = answer.request_id
     res.limitations = list(answer.limitations)
-    res.tools_called = [t.name for t in answer.tools_used]
+    res.tools_called = [t.name for t in answer.tools_used if t.ok]
     res.evidence_rows = len(answer.evidence)
     res.kind_ok = answer.kind in res.expected_kinds
     res.tools_ok = tools_satisfied(res.tools_expected, res.tools_called)
-    res.grounded = answer.kind != "evidence_only"
+    res.grounded = answer.mode == "model" and (
+        answer.kind in {"clarify", "refuse", "unsupported"}
+        or (answer.kind == "answer" and bool(res.tools_called))
+    )
     res.forbid_ok = not any(re.search(p, answer.answer) for p in expect.get("forbid", []))
     if answer.kind in ANSWER_KINDS:
         res.limitations_ok = all(
             any(re.search(p, line) for line in answer.limitations)
             for p in expect.get("limitations", [])
         )
-    # With kind_any the model may legitimately decline; values only apply to real answers.
-    needs_values = "kind" in expect or answer.kind in ANSWER_KINDS
+    # A permitted decline in kind_any cases has no numeric assertion to score. Errors,
+    # unexpected declines, and evidence-only responses must stay in the denominator.
+    needs_values = not ("kind_any" in expect and res.kind_ok and answer.kind not in ANSWER_KINDS)
     for v in res.values:
-        if v.error is None:
-            if answer.kind == "evidence_only":
-                v.found = value_in_evidence(v.format, v.expected, list(answer.evidence))
-            else:
-                v.found = value_in_text(v.format, v.expected, answer.answer)
-        if needs_values and not v.found:
+        v.required = needs_values
+        v.found = (
+            answer.kind == "answer"
+            and v.error is None
+            and v.fact is not None
+            and v.fact in answer.answer.splitlines()
+        )
+        if v.error or (needs_values and not v.found):
             res.values_ok = False
 
 
 # ---------------------------------------------------------------- run
 
 
-def is_unavailable(exc: BaseException) -> bool:
-    return getattr(exc, "code", None) == "sous_unavailable"
-
-
 async def preflight() -> bool:
-    """Cheap reachability check so a missing Ollama fails fast (exit 2)."""
-    if os.environ.get("SOUS_PROVIDER", "ollama") != "ollama":
-        return True
-    import httpx
+    """Use the configured provider's health check, including model availability."""
+    from app.sous.llm import get_provider
 
-    url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-    try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            (await client.get(f"{url}/api/tags")).raise_for_status()
-    except httpx.HTTPError:
-        return False
-    return True
+    health = await get_provider().health()
+    return health.reachable and health.model_pulled
 
 
 async def run_case(case: dict[str, Any], env: Env, provider: Any, now: datetime) -> CaseResult:
     from app.sous.orchestrator import ask
-    from app.sous.schemas import AskIn
+    from app.sous.schemas import AskIn, HistoryTurn
     from app.sous.tools import TOOL_NAMES, run_tool
 
     expect = case["expect"]
@@ -493,14 +525,15 @@ async def run_case(case: dict[str, Any], env: Env, provider: Any, now: datetime)
     question = format_question(case["question"], tokens)
     res.question = question
     await compute_expected(case, res, run_tool, env, now)
-    req = AskIn(question=question, location_id=env.loc.id, history=case.get("history", []))
+    req = AskIn(question=question, location_id=env.loc.id)
+    history = [HistoryTurn.model_validate(t) for t in case.get("history", [])]
     started = time.perf_counter()
     try:
-        answer = await ask(env.ctx, env.loc, req, provider, now=now, open_session=env)
+        answer = await ask(
+            env.ctx, env.loc, req, provider, now=now, open_session=env, history=history
+        )
     except Exception as exc:
         res.ms = round((time.perf_counter() - started) * 1000)
-        if is_unavailable(exc):
-            raise
         res.error = f"{type(exc).__name__}: {exc}"
         return res
     res.ms = round((time.perf_counter() - started) * 1000)
@@ -522,8 +555,8 @@ def percentile(values: list[int], q: float) -> int:
 
 def summarize(results: list[CaseResult]) -> dict[str, Any]:
     done = [r for r in results if r.error is None]
-    answers = [r for r in done if r.kind == "answer"]
-    answered = [v for r in done if r.kind in ANSWER_KINDS for v in r.values if v.error is None]
+    answers = [r for r in results if r.expected_kinds == ["answer"] or r.kind == "answer"]
+    answered = [v for r in results for v in r.values if v.required]
     lat = [r.ms for r in done]
     return {
         "cases": len(results),
@@ -533,12 +566,22 @@ def summarize(results: list[CaseResult]) -> dict[str, Any]:
         "values_found": sum(v.found for v in answered),
         "values_checked": len(answered),
         "unresolved_values": sum(1 for r in results for v in r.values if v.error),
-        "evidence_covered": sum(r.evidence_rows > 0 for r in answers),
+        "evidence_covered": sum(
+            r.kind == "answer"
+            and (
+                r.evidence_rows > 0
+                # Freshness is metadata, with no numeric evidence cards. Require the entire
+                # expected stream fact, not just a successful tool invocation.
+                or (r.category == "freshness" and bool(r.values) and all(v.found for v in r.values))
+            )
+            for r in answers
+        ),
         "answers": len(answers),
         "grounded": sum(r.grounded for r in done),
         "done": len(done),
         "authz_violations": sum(r.authz_violation for r in results),
         "errors": sum(r.error is not None for r in results),
+        "fallbacks": sum(r.mode == "fallback" for r in results),
         "p50_ms": round(statistics.median(lat)) if lat else 0,
         "p95_ms": percentile(lat, 0.95),
     }
@@ -551,7 +594,8 @@ def threshold_misses(s: dict[str, Any]) -> list[str]:
         return n / d if d else 1.0
 
     measured = {
-        "grounded_rate": rate(s["grounded"], s["done"]),
+        "pass_rate": s["pass_rate"],
+        "grounded_rate": rate(s["grounded"], s["cases"]),
         "value_correctness": rate(s["values_found"], s["values_checked"]),
         "evidence_coverage": rate(s["evidence_covered"], s["answers"]),
     }
@@ -560,6 +604,11 @@ def threshold_misses(s: dict[str, Any]) -> list[str]:
     ]
     if s["authz_violations"] > THRESHOLDS["authz_violations"]:
         misses.append(f"authz_violations {s['authz_violations']} > 0")
+    for key in ("errors", "unresolved_values", "fallbacks"):
+        if s[key]:
+            misses.append(f"{key} {s[key]} > 0")
+    if not s["cases"]:
+        misses.append("no cases completed")
     return misses
 
 
@@ -604,7 +653,73 @@ def print_report(results: list[CaseResult], s: dict[str, Any]) -> None:
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.write_text(json.dumps(payload, indent=2, default=str))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, indent=2, default=str) + "\n")
+    temporary.replace(path)
+
+
+async def run_metadata(now: datetime, fixture: str, planned: int) -> dict[str, Any]:
+    import httpx
+
+    from app.config import get_settings
+    from app.sous.prompt import PROMPT_VERSION
+
+    settings = get_settings()
+    metadata: dict[str, Any] = {
+        "started_at": now.isoformat(),
+        "fixture": fixture,
+        "planned_cases": planned,
+        "provider": settings.sous_provider,
+        "model": settings.sous_model,
+        "prompt_version": PROMPT_VERSION,
+        "cases_sha256": hashlib.sha256(CASES_PATH.read_bytes()).hexdigest(),
+        "runner_sha256": hashlib.sha256(
+            await asyncio.to_thread(Path(__file__).read_bytes)
+        ).hexdigest(),
+        "thresholds": THRESHOLDS,
+        "runtime_environment": {
+            k: os.environ[k]
+            for k in ("OLLAMA_NUM_PARALLEL", "OLLAMA_FLASH_ATTENTION", "OLLAMA_KV_CACHE_TYPE")
+            if k in os.environ
+        },
+    }
+    if settings.sous_provider == "ollama":
+        async with httpx.AsyncClient(timeout=10) as client:
+            tags = await client.get(f"{settings.ollama_url}/api/tags")
+            tags.raise_for_status()
+            version = await client.get(f"{settings.ollama_url}/api/version")
+            version.raise_for_status()
+        metadata["ollama_version"] = version.json()["version"]
+        metadata["model_details"] = next(
+            (m for m in tags.json()["models"] if m["name"] == settings.sous_model), None
+        )
+    return metadata
+
+
+def report_payload(results: list[CaseResult], metadata: dict[str, Any]) -> dict[str, Any]:
+    summary = summarize(results)
+    complete = len(results) == metadata["planned_cases"]
+    misses = threshold_misses(summary)
+    if not complete:
+        misses.append(f"incomplete run: {len(results)}/{metadata['planned_cases']}")
+    if metadata["provider"] != "ollama":
+        misses.append("live gate requires the Ollama provider")
+    return {
+        "metadata": metadata,
+        "complete": complete,
+        "gate_misses": misses,
+        "summary": summary,
+        "by_category": {
+            c: summarize([r for r in results if r.category == c])
+            for c in sorted({r.category for r in results})
+        },
+        "by_repeat": {
+            str(n): summarize([r for r in results if r.repeat == n])
+            for n in sorted({r.repeat for r in results})
+        },
+        "results": [asdict(r) for r in results],
+    }
 
 
 async def amain(args: argparse.Namespace) -> int:
@@ -642,27 +757,31 @@ async def amain(args: argparse.Namespace) -> int:
         env = Env(org_id=ctx.org_id, loc=loc, ctx=ctx)
         provider = get_provider()
         results: list[CaseResult] = []
-        for case in cases:
-            try:
-                results.append(await run_case(case, env, provider, datetime.now(UTC)))
-            except Exception as exc:
-                if is_unavailable(exc):
-                    print(OLLAMA_HINT, file=sys.stderr)
-                    return 2
-                raise
-            print(f"  {results[-1].id}: {'PASS' if results[-1].passed else 'FAIL'}", flush=True)
+        now = datetime.now(UTC)
+        metadata = await run_metadata(now, args.fixture, len(cases) * args.repeat)
+        for index, case in enumerate(cases * args.repeat):
+            result = await run_case(case, env, provider, now)
+            result.repeat = index // len(cases) + 1
+            results.append(result)
+            if args.json:
+                write_json(Path(args.json), report_payload(results, metadata))
+            print(
+                f"  [{result.repeat}] {result.id}: "
+                f"{'PASS' if result.passed else 'FAIL'} ({result.ms} ms)",
+                flush=True,
+            )
     finally:
         await revoke_session(ctx.session_id)
 
     summary = summarize(results)
     print_report(results, summary)
     if args.json:
-        payload = {"summary": summary, "results": [asdict(r) for r in results]}
+        payload = report_payload(results, metadata)
         write_json(Path(args.json), payload)
         print(f"\nWrote {args.json}")
     if args.min_pass is not None and summary["pass_rate"] < args.min_pass:
         return 1
-    if args.gate and threshold_misses(summary):
+    if args.gate and report_payload(results, metadata)["gate_misses"]:
         return 1
     return 0
 
@@ -671,10 +790,20 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m evals.sous.run")
     parser.add_argument("--case", help="run a single case by id")
     parser.add_argument("--limit", type=int, help="run only the first N cases")
+    parser.add_argument(
+        "--repeat", type=int, default=1, help="repeat the case set at one fixed clock"
+    )
+    parser.add_argument(
+        "--fixture", default="existing-demo", help="dataset identifier recorded in the report"
+    )
     parser.add_argument("--json", help="write full results to this file")
     parser.add_argument("--min-pass", type=float, help="exit 1 if the pass rate is below this")
     parser.add_argument("--gate", action="store_true", help="exit 1 if a threshold is missed")
     args = parser.parse_args(argv)
+    if args.repeat < 1 or (args.limit is not None and args.limit < 1):
+        parser.error("--repeat and --limit must be positive")
+    if args.min_pass is not None and not 0 <= args.min_pass <= 1:
+        parser.error("--min-pass must be between 0 and 1")
     from app.config import get_settings
 
     get_settings()

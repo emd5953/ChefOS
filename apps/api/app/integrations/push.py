@@ -253,7 +253,9 @@ def _tickets(location_id: uuid.UUID, groups: list[_Group], now: datetime) -> lis
         quotient, remainder = divmod(g.net_sales, max(g.count, 1))
         for n in range(g.count):
             amount = {"amount": quotient + (n < remainder), "currency": g.currency}
-            external_id = f"{g.prefix}{n + 1}"
+            # The push connection is shared by all locations in the org. A date or caller's
+            # record ID alone lets a location-bound key overwrite another location's sales.
+            external_id = f"{location_id}:{g.prefix}{n + 1}"
             payload = {
                 "id": external_id,
                 "location_id": str(location_id),
@@ -281,16 +283,28 @@ def _tickets(location_id: uuid.UUID, groups: list[_Group], now: datetime) -> lis
 _GROUP_ORDERS = text("""
 SELECT o.id, o.external_id, o.location_id, o.business_date FROM sales_orders o
 WHERE o.connection_id = :conn
+  AND o.location_id = :loc
   AND EXISTS (SELECT 1 FROM unnest(CAST(:prefixes AS text[])) p WHERE starts_with(o.external_id, p))
 """)
 
 
 async def _drop_stale(
-    db: AsyncSession, conn_id: uuid.UUID, groups: list[_Group], keep: set[str]
+    db: AsyncSession,
+    conn_id: uuid.UUID,
+    location_id: uuid.UUID,
+    groups: list[_Group],
+    keep: set[str],
 ) -> set[Pair]:
     """Delete earlier tickets of re-pushed groups that the new counts no longer include."""
     rows = await db.execute(
-        _GROUP_ORDERS, {"conn": conn_id, "prefixes": [g.prefix for g in groups]}
+        _GROUP_ORDERS,
+        {
+            "conn": conn_id,
+            "loc": location_id,
+            # Replace legacy IDs too, but only inside the authorized location. Re-pushing
+            # a group upgrades it atomically without counting both old and new tickets.
+            "prefixes": [p for g in groups for p in (g.prefix, f"{location_id}:{g.prefix}")],
+        },
     )
     stale = [r for r in rows if r.external_id not in keep]
     if not stale:
@@ -354,7 +368,9 @@ async def _ingest(
 
         conn = await _push_connection(db, org_id, location)
         items = _tickets(location.id, groups, now)
-        stale_pairs = await _drop_stale(db, conn.id, groups, {i.external_id for i in items})
+        stale_pairs = await _drop_stale(
+            db, conn.id, location.id, groups, {i.external_id for i in items}
+        )
         ctx = pipeline.ConnCtx(
             org_id,
             conn.id,

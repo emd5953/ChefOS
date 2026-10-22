@@ -1,28 +1,33 @@
 """Sous API (docs/api.md, Sous section)."""
 
+import asyncio
 import time
 import uuid
 from collections import defaultdict, deque
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from datetime import UTC, date, datetime
 from typing import Annotated
 
+import anyio
 import structlog
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import StreamingResponse
+from starlette.types import Send
 
 from app.commerce import service
 from app.db import scoped_session
 from app.errors import ProblemError
 from app.identity.models import Location
 from app.integrations.providers.square.business_date import business_date
-from app.security.sessions import AuthContext, StaffDep
-from app.sous import fallback, orchestrator, prompt
+from app.security.sessions import STAFF_ROLES, AuthContext, StaffDep, require_auth, require_role
+from app.sous import conversations, fallback, orchestrator, prompt
 from app.sous import service as briefings
 from app.sous.llm import LLMProvider, get_provider, sous_unavailable
 from app.sous.schemas import (
     AskIn,
     BriefingOut,
+    ConversationEvent,
     ErrorEvent,
     Heartbeat,
     SousAnswer,
@@ -72,13 +77,66 @@ async def _location(ctx: AuthContext, location_id: uuid.UUID) -> Location:
 
 
 @router.post("/ask", response_model=SousAnswer)
-async def ask(ctx: StaffDep, body: AskIn, provider: Provider) -> SousAnswer:
+async def ask(ctx: StaffDep, body: AskIn, provider: Provider, request: Request) -> SousAnswer:
     check_rate_limit(ctx.user_id)
     loc = await _location(ctx, body.location_id)
-    return await orchestrator.ask(ctx, loc, body, provider)
+    async with aclosing(_authorized_events(ctx, loc, body, provider, request)) as events:
+        async for event in events:
+            if isinstance(event, SousAnswer):
+                return event
+    raise RuntimeError("Sous finished without an answer")
+
+
+async def _authorized_events(
+    ctx: AuthContext, loc: Location, body: AskIn, provider: LLMProvider, request: Request
+) -> AsyncGenerator[SousEvent]:
+    reservation = await conversations.begin(ctx, body)
+    completed = reservation.replay is not None
+    try:
+        yield ConversationEvent(
+            conversation_id=reservation.conversation_id, turn_id=reservation.turn_id
+        )
+        if reservation.replay is not None:
+            current = await require_auth(request)
+            require_role(current, STAFF_ROLES)
+            await _location(current, body.location_id)
+            yield reservation.replay
+            return
+        # Reauthorize before another model round and before committing/releasing the answer.
+        async with aclosing(
+            orchestrator.events(ctx, loc, body, provider, history=reservation.history)
+        ) as events:
+            async for event in events:
+                if isinstance(event, ToolEvent | SousAnswer):
+                    current = await require_auth(request)
+                    require_role(current, STAFF_ROLES)
+                    await _location(current, body.location_id)
+                if isinstance(event, SousAnswer):
+                    event = await conversations.complete(ctx, reservation, event)
+                    completed = True
+                yield event
+    finally:
+        if not completed:
+            # Starlette's SSE disconnect cancels an AnyIO scope repeatedly at each await.
+            # Shield that scope as well as one-shot asyncio task cancellation until release
+            # commits, so Stop/Retry never has to wait out the crashed-worker lease.
+            with anyio.CancelScope(shield=True):
+                cleanup = asyncio.create_task(conversations.release(ctx, reservation))
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    await cleanup
+                    raise
+
+
+@router.delete("/conversations/{conversation_id}", status_code=204)
+async def clear_conversation(ctx: StaffDep, conversation_id: uuid.UUID) -> Response:
+    await conversations.remove(ctx, conversation_id)
+    return Response(status_code=204)
 
 
 _EVENT_NAMES: dict[type, str] = {
+    ConversationEvent: "conversation",
     StatusEvent: "status",
     ToolEvent: "tool",
     SousAnswer: "answer",
@@ -92,10 +150,11 @@ def sse(event: SousEvent | ErrorEvent) -> str:
     return f"event: {_EVENT_NAMES[type(event)]}\ndata: {event.model_dump_json(by_alias=True)}\n\n"
 
 
-async def _stream(events: AsyncIterator[SousEvent]) -> AsyncIterator[str]:
+async def _stream(events: AsyncGenerator[SousEvent]) -> AsyncGenerator[str]:
     try:
-        async for event in events:
-            yield sse(event)
+        async with aclosing(events):
+            async for event in events:
+                yield sse(event)
     except ProblemError as exc:
         yield sse(ErrorEvent(status=exc.status, code=exc.code, detail=exc.detail or exc.title))
     except Exception:
@@ -105,8 +164,32 @@ async def _stream(events: AsyncIterator[SousEvent]) -> AsyncIterator[str]:
         )
 
 
+class SousStreamingResponse(StreamingResponse):
+    """Close the generator on send failure as well as cancellation during its next event."""
+
+    def __init__(self, events: AsyncGenerator[str]) -> None:
+        self.events = events
+        super().__init__(
+            events,
+            media_type="text/event-stream",
+            # no-transform prevents Next/CDNs from buffering progress behind gzip.
+            headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+        )
+
+    async def stream_response(self, send: Send) -> None:
+        try:
+            await super().stream_response(send)
+        finally:
+            # ASGI 2.4 reports disconnect as a send error while our generator is suspended
+            # at a yield; Starlette does not itself close that iterator.
+            with anyio.CancelScope(shield=True):
+                await self.events.aclose()
+
+
 @router.post("/ask/stream", response_class=StreamingResponse)
-async def ask_stream(ctx: StaffDep, body: AskIn, provider: Provider) -> StreamingResponse:
+async def ask_stream(
+    ctx: StaffDep, body: AskIn, provider: Provider, request: Request
+) -> StreamingResponse:
     """Server-sent events: status, tool, then answer or error (docs/specs/sous.md, v1.1)."""
     check_rate_limit(ctx.user_id)
     loc = await _location(ctx, body.location_id)
@@ -114,14 +197,11 @@ async def ask_stream(ctx: StaffDep, body: AskIn, provider: Provider) -> Streamin
     if breaker is not None and breaker.state == "open":
         # Fail before the stream starts when nothing could answer.
         today = business_date(datetime.now(UTC), loc.timezone, loc.business_day_start)
-        if fallback.match(body.question, today) is None:
+        if fallback.match(body.question, today) is None and not await conversations.has_replay(
+            ctx, body
+        ):
             raise sous_unavailable()
-    return StreamingResponse(
-        _stream(orchestrator.events(ctx, loc, body, provider)),
-        media_type="text/event-stream",
-        # no-transform stops gzip in front of us (Next's dev proxy, CDNs) buffering the events.
-        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
-    )
+    return SousStreamingResponse(_stream(_authorized_events(ctx, loc, body, provider, request)))
 
 
 @router.get("/status", response_model=StatusOut)

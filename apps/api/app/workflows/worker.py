@@ -17,6 +17,7 @@ from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
 from app.config import get_settings
+from app.sous.retention import run_cleanup
 from app.telemetry import setup_telemetry
 from app.workflows import integrations, ping, team
 from app.workflows.client import TASK_QUEUE, get_temporal_client
@@ -75,7 +76,7 @@ def build_backfill_worker(client: Any) -> Worker:
 @contextlib.asynccontextmanager
 async def run_workers(client: Any) -> AsyncIterator[None]:
     """Both workers (default queue and backfill queue), as the worker process runs them."""
-    async with build_worker(client), build_backfill_worker(client):
+    async with build_worker(client), build_backfill_worker(client), run_cleanup():
         yield
 
 

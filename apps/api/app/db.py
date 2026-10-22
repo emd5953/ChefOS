@@ -144,3 +144,19 @@ async def check_db() -> None:
     """Raises if the database is unreachable (used by /readyz)."""
     async with get_engine().connect() as conn:
         await conn.execute(text("SELECT 1"))
+
+
+async def purge_expired_sous_conversations(batch_size: int = 100) -> int:
+    """Delete only expired, inactive histories across owners via a narrow definer function.
+
+    The application role still cannot read private conversations without both RLS scopes.
+    Each batch commits independently; concurrent workers skip each other's locked rows.
+    """
+    if not 1 <= batch_size <= 1000:
+        raise ValueError("batch_size must be between 1 and 1000")
+    async with _sessionmaker()() as session, session.begin():
+        count = await session.scalar(
+            text("SELECT public.purge_expired_sous_conversations(:batch_size)"),
+            {"batch_size": batch_size},
+        )
+        return int(count)

@@ -420,8 +420,8 @@ async def test_stream_endpoint_sends_events_then_answer(
     assert r.headers["content-type"].startswith("text/event-stream")
     assert r.headers["cache-control"] == "no-cache, no-transform"
     events = parse_sse(r.text)
-    assert [name for name, _ in events] == ["status", "tool", "status", "answer"]
-    assert events[1][1]["label"] == "Checked how current the data is"
+    assert [name for name, _ in events] == ["conversation", "status", "tool", "status", "answer"]
+    assert events[2][1]["label"] == "Checked how current the data is"
     answer = events[-1][1]
     assert answer["kind"] == "clarify" and answer["mode"] == "model"
     assert answer["request_id"] == r.headers["x-request-id"]

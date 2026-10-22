@@ -128,6 +128,11 @@ Owners and admins manage API keys; create and revoke are audited. The secret (`c
 
 Totals land through the shared pipeline as unitemized tickets (they appear as unmapped sales in item mix) and refresh the location's `orders` freshness. Push orders remain fresh for 26 hours after a successful push; push locations report `timecards`, `catalog`, and `team_members` as `not_connected`. Square freshness continues to use its stream sync intervals. `net_sales` is integer minor units (0 to 10^11). `closed_at` is an ISO timestamp with offset and not in the future; `business_date` is a date in the location's business calendar, not after today. `id` matches `[A-Za-z0-9._-]+`; ids and dates are unique per batch, and a batch uses one ISO currency matching the location's existing sales. Batches cap at 500 order records or 400 daily totals and 5,000 expanded orders. Re-pushing an order id or date replaces it. Reusing an `Idempotency-Key` with the same endpoint, location and body returns the original response; anything else is `409`. Push is refused (`409`) for a location fed by a live connector, and a Square location cannot be linked to a push-fed location.
 
+Order IDs and dates are scoped to the requested location: another location may use the same
+record IDs/dates without affecting these totals. Corrections remove obsolete tickets only
+within that location. Re-pushing replaces legacy synthetic IDs atomically; previously lost
+totals from a cross-location collision require reconciliation and re-push from the source.
+
 **Square mode.** `SQUARE_MODE=fake` (default) uses a simulated Square sandbox. `authorize_url` points at the API's own `/v1/integrations/square/fake-consent?state=…`, which redirects straight to the callback, and data comes from a deterministic generator in Square's payload shapes. `SQUARE_MODE=sandbox` uses the real Square sandbox with `SQUARE_APP_ID`/`SQUARE_APP_SECRET`/`SQUARE_WEBHOOK_SIGNATURE_KEY`.
 
 **Single-location auto-link.** If the org has exactly one location and Square reports exactly one, they're linked automatically on connect, and sync and backfill start immediately.
@@ -423,7 +428,7 @@ Item base units must be `g` for mass, `ml` for volume, or `ea` for count. INV-1 
 
 ## Sous
 
-Read-only operations assistant over a location's sales, labor, published schedule and inventory pars. The model picks from eight typed tools (`get_sales_summary`, `get_daily_sales`, `get_top_items`, `get_today`, `get_data_freshness`, `get_labor_summary`, `get_schedule`, `find_items_below_par`) and explains what they return. Numbers in the answer must match tool results; evidence and limitations are computed by the API. Design: [Sous spec](specs/sous.md).
+Read-only operations assistant over a location's sales, labor, published schedule and inventory pars. The model picks from eight typed tools (`get_sales_summary`, `get_daily_sales`, `get_top_items`, `get_today`, `get_data_freshness`, `get_labor_summary`, `get_schedule`, `find_items_below_par`) and selects facts from their results. The server renders each selected fact with its metric, period, entity, signed value and unit. Model-authored prose never becomes an answer; evidence and limitations are also computed by the API. Design: [Sous spec](specs/sous.md).
 
 ```ts
 type SousKind = "answer" | "clarify" | "refuse" | "unsupported" | "evidence_only"
@@ -432,6 +437,7 @@ type Evidence = { label: string; value: number;
                         | "g" | "ml" | "ea" /* stock in an item's base unit */;
                   source: string /* tool name */; as_of: string | null }
 type SousAnswer = {
+  conversation_id: string; turn_id: string; conversation_version: number;
   kind: SousKind;
   answer: string;                       // plain text, no markdown
   period: { from: string; to: string; timezone: string } | null;
@@ -447,13 +453,50 @@ type SousStatus = { provider: "ollama" | "fake"; model: string;
 
 ### `POST /v1/sous/ask`
 
-Body: `{ question: string /* 1-500 chars */; location_id: string; history?: Array<{ role: "user" | "assistant"; content: string }> /* max 10 */ }`. Response `200 SousAnswer`.
+Body: `{ question: string /* 1-500 chars */; location_id: string; conversation_id?: string; turn_id?: string }`. IDs are UUIDs. Response `200 SousAnswer`.
 
-- `kind` is `clarify` when the question needs a period or other detail, `refuse` when asked to leave its role, `unsupported` for anything outside the tools (schedules, inventory, waste, payroll), and `evidence_only` when no written answer passed the number check (`answer` is a fixed sentence and `evidence` carries the figures). Only `answer` and `evidence_only` include `period`, `evidence` and `limitations`.
+Omit `conversation_id` to start a private conversation; send the returned ID for follow-ups.
+The server owns prior turns, scoped by organization, user and location (including same-user
+RLS). Only the last five completed question/answer pairs enter model context; prior answers
+are not evidence for the current question. Nonempty client `history` is rejected with 422;
+`history: []` is accepted for compatibility. Unknown request fields are rejected.
+
+Use a fresh `turn_id` per question and reuse it for retries. A completed retry replays the
+saved answer without model/tool work, including during a provider outage. The original
+answer's `request_id` is retained on replay. Without a turn ID the server generates one, so
+clients should provide it to recover when a response is lost. One question may run per
+conversation. Failed/cancelled attempts are excluded from history; expired workers are fenced
+from committing over a replacement. Conversations allow 200 completed turns; then start a new
+one. Conversations expire 30 days after creation once an answer has been saved; unanswered
+conversations expire after 24 hours. Replays and follow-ups do not extend that deadline.
+Saved retries expire with their conversation. Expired conversations cannot supply history or replay an answer. Cleanup runs at worker startup
+and hourly, deletes up to 1,000 expired conversations per sweep, and cascades through their
+turns. Active leases and locked rows are skipped until a later sweep. Manual cleanup:
+`make sous-cleanup`. Physical deletion requires the worker or manual cleanup to run; database
+backups follow their own retention policy.
+
+`POST /v1/sous/ask/stream` accepts the same body. Its first event is
+`conversation` with `{ conversation_id, turn_id }`, followed by status/tool progress and a
+terminal answer or error. The answer is committed before delivery.
+
+`DELETE /v1/sous/conversations/{id}` clears the caller's conversation and all its turns,
+returning 204. Session, staff role, CSRF, ownership and current location access are required.
+Clearing fences any still-running answer; unknown or inaccessible IDs return 404.
+
+- `kind` is `clarify` when the question needs a period or other detail, `refuse` when asked to leave its role, `unsupported` for anything outside the tools (editing schedules, placing orders, waste, payroll), and `evidence_only` when a fact selection is invalid after one repair, or the request exceeds the context budget (`answer` is deterministic and `evidence` carries any collected figures). Only `answer` and `evidence_only` include `period`, `evidence` and `limitations`.
 - Evidence money is integer cents (`usd_cents`); percents are in percent units.
 - A `location_id` outside the user's scope is `404 not_found`, as for Commerce.
+- `409 sous_turn_running`: another attempt is still active; retry after it finishes.
+- `409 sous_turn_conflict`: the turn ID was reused for a different request.
+- `409 sous_turn_stale`: a failed turn was superseded, or a conversation was cleared.
+- `409 sous_conversation_full`: start a new conversation.
+- `410 sous_conversation_expired`: clear the expired conversation and start a new one.
+  After physical cleanup, the same conversation ID returns `404`.
 - `429 rate_limited`: 20 questions per minute per user.
 - `503 sous_unavailable`: the language model is unreachable or timed out.
+- `503 sous_busy`: model concurrency capacity is full; Retry-After is 5 seconds.
+- `504 sous_timeout`: the question exceeded the 120-second orchestration deadline.
+- Session, staff role and location access are rechecked before tool-result handoff and final delivery. After SSE headers are sent, failures are terminal `error` events carrying the status/code/detail rather than a new HTTP status.
 
 ### `GET /v1/sous/status`
 

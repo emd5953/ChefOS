@@ -1,5 +1,6 @@
 """LLM providers behind one small interface. Ollama runs locally; FakeProvider replays scripts."""
 
+import asyncio
 import copy
 import json
 import time
@@ -17,6 +18,21 @@ from app.sous.schemas import BreakerState
 log = structlog.get_logger()
 
 Message = dict[str, Any]
+
+MAX_REPLY_BYTES = 128_000
+MAX_CONTEXT_BYTES = 28_000  # includes tool schemas; leaves room in num_ctx for output/framing
+MAX_REPLY_CHARS = 16_000
+MAX_REPLY_TOOL_CALLS = 16
+MAX_TOOL_ARGS_CHARS = 4_000
+MAX_IN_FLIGHT = 4  # per process; reject excess work instead of queuing on the local model
+_in_flight = 0
+
+
+def context_fits(messages: list[Message], tools: list[dict[str, Any]]) -> bool:
+    # UTF-8 bytes bound non-ASCII input too; a character cap can badly underestimate tokens.
+    return (
+        len(json.dumps([messages, tools], ensure_ascii=False).encode("utf-8")) <= MAX_CONTEXT_BYTES
+    )
 
 
 @dataclass(frozen=True)
@@ -76,6 +92,7 @@ class CircuitBreaker:
         self._failures = 0
         self._opened_at: float | None = None
         self._trial_in_flight = False
+        self.generation = 0
 
     @property
     def state(self) -> BreakerState:
@@ -95,19 +112,28 @@ class CircuitBreaker:
             return True
         return False
 
-    def record_success(self) -> None:
+    def record_success(self, *, generation: int | None = None) -> None:
+        if generation is not None and generation != self.generation:
+            return
+        if self._opened_at is not None:
+            self.generation += 1
         self._failures = 0
         self._opened_at = None
         self._trial_in_flight = False
 
-    def record_failure(self) -> None:
+    def record_failure(self, *, generation: int | None = None) -> None:
+        if generation is not None and generation != self.generation:
+            return
         self._failures += 1
         if self._trial_in_flight or self._failures >= self.threshold:
             self._opened_at = self._clock()
+            self.generation += 1
         self._trial_in_flight = False
 
-    def release(self) -> None:
+    def release(self, *, generation: int | None = None) -> None:
         """A call ended with no verdict (cancelled): free the half-open trial slot."""
+        if generation is not None and generation != self.generation:
+            return
         self._trial_in_flight = False
 
     def reset(self) -> None:
@@ -129,19 +155,42 @@ class OllamaProvider:
         self.breaker: CircuitBreaker | None = breaker or BREAKER
 
     async def chat(self, messages: list[Message], tools: list[dict[str, Any]]) -> LLMReply:
+        global _in_flight
+        # Input capacity is not a provider outage and must not trip the shared breaker.
+        if not context_fits(messages, tools):
+            raise ProblemError(422, "sous_context_limit", "Sous needs a shorter conversation.")
+        if _in_flight >= MAX_IN_FLIGHT:
+            raise ProblemError(
+                503,
+                "sous_busy",
+                "Sous is busy. Try again shortly.",
+                headers={"Retry-After": "5"},
+            )
         breaker = self.breaker or BREAKER
         if not breaker.allow():
             raise sous_unavailable()
+        generation = breaker.generation
+        # No await between checking capacity and reserving it (one event loop per worker).
+        _in_flight += 1
         try:
-            reply = await self._chat(messages, tools)
+            # HTTP read timeouts measure inactivity, not total duration. A trickling response
+            # must not occupy the model indefinitely.
+            async with asyncio.timeout(self.timeout):
+                reply = await self._chat(messages, tools)
+        except TimeoutError as exc:
+            breaker.record_failure(generation=generation)
+            log.warning("sous_provider_error", provider="ollama", error="TimeoutError")
+            raise sous_unavailable() from exc
         except ProblemError:
-            breaker.record_failure()
+            breaker.record_failure(generation=generation)
             raise
         except BaseException:
             # Cancelled (the client went away): no verdict on the model, free the trial slot.
-            breaker.release()
+            breaker.release(generation=generation)
             raise
-        breaker.record_success()
+        finally:
+            _in_flight -= 1
+        breaker.record_success(generation=generation)
         return reply
 
     async def _chat(self, messages: list[Message], tools: list[dict[str, Any]]) -> LLMReply:
@@ -151,17 +200,34 @@ class OllamaProvider:
             "tools": tools,
             "stream": False,
             "think": False,
-            "options": {"temperature": 0},
+            "options": {"temperature": 0, "num_predict": 2048, "num_ctx": 32768},
         }
         try:
             # Connecting fails fast; a slow model gets the full read timeout.
             timeout = httpx.Timeout(self.timeout, connect=3.0)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                r = await client.post(f"{self.url}/api/chat", json=body)
-            r.raise_for_status()
-            message = r.json()["message"]
-            calls = [_tool_call(tc) for tc in message.get("tool_calls") or []]
-            return LLMReply(content=message.get("content") or "", tool_calls=calls)
+            async with (
+                httpx.AsyncClient(timeout=timeout) as client,
+                client.stream("POST", f"{self.url}/api/chat", json=body) as response,
+            ):
+                response.raise_for_status()
+                payload = bytearray()
+                async for chunk in response.aiter_bytes():
+                    payload.extend(chunk)
+                    if len(payload) > MAX_REPLY_BYTES:
+                        raise ValueError("Model response budget exceeded")
+            document = json.loads(payload)
+            if document.get("done_reason") == "length":
+                raise ValueError("Model output was truncated")
+            message = document["message"]
+            content = message.get("content", "")
+            raw_calls = message.get("tool_calls", [])
+            if raw_calls is None:
+                raw_calls = []
+            if not isinstance(content, str) or len(content) > MAX_REPLY_CHARS:
+                raise ValueError("Invalid model content")
+            if not isinstance(raw_calls, list) or len(raw_calls) > MAX_REPLY_TOOL_CALLS:
+                raise ValueError("Invalid model tool calls")
+            return LLMReply(content=content, tool_calls=[_tool_call(tc) for tc in raw_calls])
         except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError) as exc:
             # Never log the prompt or the reply; the error type is enough to debug.
             log.warning("sous_provider_error", provider="ollama", error=type(exc).__name__)
@@ -182,13 +248,15 @@ class OllamaProvider:
 
 def _tool_call(raw: dict[str, Any]) -> ToolCall:
     fn = raw["function"]
-    args = fn.get("arguments") or {}
+    name = fn["name"]
+    if not isinstance(name, str) or not name or len(name) > 100:
+        raise ValueError("Invalid tool name")
+    args = fn.get("arguments", {})
     if isinstance(args, str):  # some models send JSON text instead of an object
-        try:
-            args = json.loads(args)
-        except ValueError:
-            args = {}
-    return ToolCall(name=str(fn["name"]), arguments=args if isinstance(args, dict) else {})
+        args = json.loads(args)
+    if not isinstance(args, dict) or len(json.dumps(args)) > MAX_TOOL_ARGS_CHARS:
+        raise ValueError("Invalid tool arguments")
+    return ToolCall(name=name, arguments=args)
 
 
 class FakeProvider:

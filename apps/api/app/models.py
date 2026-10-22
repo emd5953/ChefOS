@@ -9,6 +9,7 @@ from app.identity import models as identity_models
 from app.integrations import models as integrations_models
 from app.inventory import models as inventory_models
 from app.security import models as security_models
+from app.sous import models as sous_models
 from app.team import models as team_models
 
 __all__ = [
@@ -18,5 +19,6 @@ __all__ = [
     "integrations_models",
     "inventory_models",
     "security_models",
+    "sous_models",
     "team_models",
 ]

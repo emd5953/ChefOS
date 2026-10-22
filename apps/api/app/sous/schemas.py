@@ -16,9 +16,13 @@ class HistoryTurn(BaseModel):
 
 
 class AskIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    conversation_id: uuid.UUID | None = None
+    turn_id: uuid.UUID = Field(default_factory=uuid.uuid4)
     question: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
     location_id: uuid.UUID
-    history: list[HistoryTurn] = Field(default_factory=list, max_length=10)
+    history: list[HistoryTurn] = Field(default_factory=list, max_length=0)
 
 
 class Period(BaseModel):
@@ -45,6 +49,9 @@ class ToolUse(BaseModel):
 
 
 class SousAnswer(BaseModel):
+    conversation_id: uuid.UUID | None = None
+    turn_id: uuid.UUID | None = None
+    conversation_version: int | None = None
     kind: Kind
     answer: str
     period: Period | None
@@ -69,6 +76,11 @@ class StatusOut(BaseModel):
 # --- stream events (POST /v1/sous/ask/stream) ------------------------------------------------
 
 
+class ConversationEvent(BaseModel):
+    conversation_id: uuid.UUID
+    turn_id: uuid.UUID
+
+
 class StatusEvent(BaseModel):
     label: str
 
@@ -87,7 +99,7 @@ class Heartbeat(BaseModel):
     """Sent as an SSE comment while the model is thinking, so proxies keep the stream open."""
 
 
-SousEvent = StatusEvent | ToolEvent | SousAnswer | Heartbeat
+SousEvent = ConversationEvent | StatusEvent | ToolEvent | SousAnswer | Heartbeat
 
 
 # --- daily briefing (GET /v1/sous/briefing, SOUS-2) ------------------------------------------
@@ -184,8 +196,8 @@ class BriefingOut(BaseModel):
 
 
 # --- Team and Inventory tool facts (get_labor_summary, get_schedule, find_items_below_par) ----
-# What these tools hand the model, dumped to JSON. Field names carry their unit for the grounding
-# check: `*_usd` is dollars, `*_pct` percent; hours and quantities are plain numbers.
+# Typed tool data, converted to a server-rendered fact catalog before model use.
+# `*_usd` is dollars, `*_pct` percent; hours and quantities are plain numbers.
 
 
 class FactsPeriod(BaseModel):

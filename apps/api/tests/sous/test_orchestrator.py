@@ -12,10 +12,10 @@ from app.commerce.schemas import FreshnessOut, ItemOut, ItemsOut
 from app.db import scoped_session
 from app.identity.models import Location
 from app.security.sessions import AuthContext
-from app.sous import orchestrator, prompt
+from app.sous import claims, orchestrator, prompt
 from app.sous.llm import FakeProvider, LLMReply, ToolCall
 from app.sous.orchestrator import MAX_ROUNDS, MAX_TOOL_CALLS, limitations, split_kind, strip_think
-from app.sous.schemas import AskIn, SousAnswer
+from app.sous.schemas import AskIn, HistoryTurn, SousAnswer
 from app.sous.tools import ToolResult
 from tests.integrations.conftest import Clock, Connected
 
@@ -28,6 +28,10 @@ def call(name: str = "get_sales_summary", **args: Any) -> ToolCall:
 
 def tool_round(*calls: ToolCall) -> LLMReply:
     return LLMReply(tool_calls=list(calls))
+
+
+def select_facts(*ids: str) -> LLMReply:
+    return LLMReply(content=json.dumps({"kind": "answer", "claims": list(ids)}))
 
 
 def say(text: str) -> LLMReply:
@@ -50,8 +54,9 @@ async def ask(
     )
     async with scoped_session(conn.org_id) as db:
         loc = await db.get_one(Location, conn.location_id)
+    history = [HistoryTurn.model_validate(t) for t in kw.pop("history", [])]
     req = AskIn(question=question, location_id=conn.location_id, **kw)
-    return await orchestrator.ask(ctx, loc, req, provider, now=clock.now)
+    return await orchestrator.ask(ctx, loc, req, provider, now=clock.now, history=history)
 
 
 async def week_summary(conn: Connected) -> Any:
@@ -68,14 +73,14 @@ def dollars(cents: int) -> str:
 
 async def test_happy_path_grounded_answer_with_evidence(loaded: Connected, clock: Clock) -> None:
     s = await week_summary(loaded)
-    text = (
-        f"Net sales were {dollars(s.current.net_sales)} across {s.current.orders:,} orders, "
-        f"with labor at {s.current.labor_pct}% of net sales."
+    fake = FakeProvider(
+        [tool_round(call(**WEEK)), select_facts("r0.net_sales_usd", "r0.orders", "r0.labor_pct")],
+        model="m-1",
     )
-    fake = FakeProvider([tool_round(call(**WEEK)), say(text)], model="m-1")
     a = await ask(loaded, clock, fake)
 
-    assert a.kind == "answer" and a.answer == text
+    assert a.kind == "answer"
+    assert f"Net sales (2026-03-01 to 2026-03-07): {dollars(s.current.net_sales)}." in a.answer
     assert a.model == "m-1" and a.prompt_version == prompt.PROMPT_VERSION
     assert a.request_id
     assert a.period is not None
@@ -106,7 +111,7 @@ async def test_happy_path_grounded_answer_with_evidence(loaded: Connected, clock
         "arguments": WEEK,
     }
     assert second[3]["tool_name"] == "get_sales_summary"
-    assert json.loads(second[3]["content"])["net_sales_usd"] == s.current.net_sales / 100
+    assert json.loads(second[3]["content"])["facts"]["r0.net_sales_usd"] in a.answer
 
 
 async def test_system_prompt_states_date_zone_and_rules(loaded: Connected, clock: Clock) -> None:
@@ -138,25 +143,30 @@ async def test_history_is_replayed_between_system_and_question(
 
 async def test_comparison_evidence_and_period(loaded: Connected, clock: Clock) -> None:
     s = await week_summary(loaded)
-    text = f"Net sales changed {s.change.net_sales_pct}% versus the week before."
-    fake = FakeProvider([tool_round(call(**WEEK, compare="previous_period")), say(text)])
+    fake = FakeProvider(
+        [
+            tool_round(call(**WEEK, compare="previous_period")),
+            select_facts("r0.change.net_sales_pct"),
+        ]
+    )
     a = await ask(loaded, clock, fake)
     assert a.kind == "answer"
     ev = {e.label.split(" (")[0]: e for e in a.evidence if "change" in e.label}
     assert ev["Net sales change"].value == s.change.net_sales_pct
 
 
-async def test_ungrounded_number_is_retried_with_the_offender_named(
+async def test_unverified_prose_is_retried_with_the_claim_contract(
     loaded: Connected, clock: Clock
 ) -> None:
     s = await week_summary(loaded)
-    good = f"Net sales were {dollars(s.current.net_sales)}."
-    fake = FakeProvider([tool_round(call(**WEEK)), say("Net sales were $1.23."), say(good)])
+    fake = FakeProvider(
+        [tool_round(call(**WEEK)), say("Net sales were $1.23."), select_facts("r0.net_sales_usd")]
+    )
     a = await ask(loaded, clock, fake)
-    assert a.kind == "answer" and a.answer == good
+    assert a.kind == "answer" and dollars(s.current.net_sales) in a.answer
     retry = fake.calls[2]
     assert retry[-2] == {"role": "assistant", "content": "Net sales were $1.23."}
-    assert retry[-1]["role"] == "user" and "$1.23" in retry[-1]["content"]
+    assert retry[-1]["role"] == "user" and "exact fact ID" in retry[-1]["content"]
 
 
 async def test_second_ungrounded_answer_falls_back_to_evidence_only(
@@ -186,7 +196,7 @@ async def test_empty_reply_is_retried(loaded: Connected, clock: Clock) -> None:
     fake = FakeProvider([say("  "), say("UNSUPPORTED: I only know sales and labor.")])
     a = await ask(loaded, clock, fake)
     assert a.kind == "unsupported"
-    assert "empty" in fake.calls[1][-1]["content"]
+    assert "could not be verified" in fake.calls[1][-1]["content"]
 
 
 @pytest.mark.parametrize(
@@ -198,11 +208,6 @@ async def test_empty_reply_is_retried(loaded: Connected, clock: Clock) -> None:
         ("REFUSE: I can't do that.", "refuse", "I can't do that."),
         ("<think>The user wants 12345.</think>\nCLARIFY: Which day?", "clarify", "Which day?"),
         (
-            "**Sorry**, CLARIFY: no",
-            "answer",
-            "Sorry, CLARIFY: no",
-        ),  # prefix only counts at the start
-        (
             "UNSUPPORTED: **Schedules** are not covered.",
             "unsupported",
             "Schedules are not covered.",
@@ -213,27 +218,25 @@ async def test_kind_prefixes_are_stripped(
     loaded: Connected, clock: Clock, reply: str, kind: str, text: str
 ) -> None:
     a = await ask(loaded, clock, FakeProvider([say(reply)]))
-    assert (a.kind, a.answer) == (kind, text)
+    assert a.kind == kind
+    assert a.answer == claims.CONTROLLED["question" if kind == "clarify" else kind]
     assert a.evidence == [] and a.period is None and a.limitations == []
 
 
-async def test_clarify_may_mention_numbers_without_grounding(
-    loaded: Connected, clock: Clock
-) -> None:
+async def test_clarify_cannot_launder_unverified_numbers(loaded: Connected, clock: Clock) -> None:
     a = await ask(loaded, clock, FakeProvider([say("CLARIFY: Last 7 days or last 30 days?")]))
     assert a.kind == "clarify"
+    assert "7" not in a.answer and "30" not in a.answer
 
 
 async def test_tool_validation_error_goes_to_the_model_and_is_recorded(
     loaded: Connected, clock: Clock
 ) -> None:
-    s = await week_summary(loaded)
-    good = f"Net sales were {dollars(s.current.net_sales)}."
     fake = FakeProvider(
         [
             tool_round(call(**{"from": "2026-03-07", "to": "2026-03-01"})),
             tool_round(call(**WEEK)),
-            say(good),
+            select_facts("r1.net_sales_usd"),
         ]
     )
     a = await ask(loaded, clock, fake)
@@ -353,10 +356,7 @@ def test_limitations_for_not_connected_and_failed_tools() -> None:
 
 async def test_answer_limitations_come_from_freshness(loaded: Connected, clock: Clock) -> None:
     # The fake clock is months behind the wall clock, so the streams read as stale.
-    s = await week_summary(loaded)
-    fake = FakeProvider(
-        [tool_round(call(**WEEK)), say(f"Net sales were {dollars(s.current.net_sales)}.")]
-    )
+    fake = FakeProvider([tool_round(call(**WEEK)), select_facts("r0.net_sales_usd")])
     a = await ask(loaded, clock, fake)
     assert any(line.startswith("Orders data is stale; last updated ") for line in a.limitations)
 
@@ -365,5 +365,7 @@ def test_strip_think_and_split_kind() -> None:
     assert strip_think("<think>a\nb</think> Hello") == "Hello"
     assert strip_think("reasoning</think>Answer") == "Answer"
     assert strip_think("Plain") == "Plain"
+    assert strip_think("<think>unfinished private reasoning") == ""
+    assert split_kind("Sorry, CLARIFY: no") == ("answer", "Sorry, CLARIFY: no")
     assert split_kind("REFUSE: no") == ("refuse", "no")
     assert split_kind("Just text") == ("answer", "Just text")

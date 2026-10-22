@@ -1,5 +1,6 @@
 """Pipeline correctness: idempotency, reconciliation, returns, version guards, deferral."""
 
+import asyncio
 import copy
 import uuid
 from datetime import UTC, date, datetime, timedelta
@@ -7,6 +8,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.db import scoped_session
 from app.integrations import pipeline, sync
@@ -207,6 +209,68 @@ async def ingest(
             conn.org_id, conn.connection_id, await load_links(db, conn.connection_id)
         )
         return await pipeline.ingest(db, ctx, stream, items, None, now)
+
+
+async def test_concurrent_first_versions_replace_lines_and_rebuild_old_date(
+    connect: Connect, clock: Clock, owner_engine: AsyncEngine
+) -> None:
+    conn = await connect()
+    first = _order(
+        "racing",
+        "L_JUNIPER_BK",
+        version=1,
+        closed="2026-03-01T23:00:00Z",
+        updated="2026-03-01T23:00:00Z",
+    )
+    newer = copy.deepcopy(first)
+    newer.update(version=2, closed_at="2026-03-02T23:00:00Z", updated_at="2026-03-02T23:00:00Z")
+    first_written, release_first, second_started = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    second_pid: list[int] = []
+
+    async def writer(payload: dict, hold: bool) -> None:
+        async with scoped_session(conn.org_id) as db:
+            ctx = pipeline.ConnCtx(
+                conn.org_id, conn.connection_id, await load_links(db, conn.connection_id)
+            )
+            if not hold:
+                second_pid.append(await db.scalar(text("SELECT pg_backend_pid()")))
+                second_started.set()
+            await pipeline.ingest(db, ctx, "orders", [raw(payload)], None, clock.now)
+            if hold:
+                first_written.set()
+                await release_first.wait()
+
+    async with asyncio.timeout(10), asyncio.TaskGroup() as group:
+        group.create_task(writer(first, True))
+        await first_written.wait()
+        group.create_task(writer(newer, False))
+        await second_started.wait()
+        # Wait until the second transaction is blocked by the uncommitted first write. Before
+        # the fix it had already read "no order" and blocked at the upsert; after it blocks
+        # before that read. No timing-dependent sleeps decide when the first writer commits.
+        try:
+            async with owner_engine.connect() as db:
+                while not await db.scalar(  # noqa: ASYNC110 -- PostgreSQL lock state has no asyncio event
+                    text("SELECT cardinality(pg_blocking_pids(:pid))"), {"pid": second_pid[0]}
+                ):
+                    await asyncio.sleep(0.01)
+        finally:
+            release_first.set()
+
+    async with scoped_session(conn.org_id) as db:
+        assert (
+            await db.scalar(
+                text("SELECT source_version FROM sales_orders WHERE external_id='racing'")
+            )
+            == 2
+        )
+        assert await db.scalar(
+            text(
+                "SELECT count(*) FROM sales_order_lines l JOIN sales_orders o ON l.order_id=o.id WHERE o.external_id='racing'"
+            )
+        ) == len(newer["line_items"])
+    assert await daily(conn, date(2026, 3, 1)) == {"net": 0, "returns": 0, "orders": 0}
+    assert await daily(conn, date(2026, 3, 2)) == {"net": 1800, "returns": 0, "orders": 1}
 
 
 async def daily(conn: Connected, d: date) -> dict[str, int]:
