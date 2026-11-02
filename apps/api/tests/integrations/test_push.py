@@ -249,6 +249,66 @@ async def test_idempotent_replay(acct: dict[str, Any], external: httpx.AsyncClie
     assert conns.status_code == 200 and conns.json()["data"] == []
 
 
+@pytest.mark.parametrize("route", ["daily-sales", "orders"])
+async def test_bound_keys_cannot_overwrite_same_ids_at_another_location(
+    acct: dict[str, Any], external: httpx.AsyncClient, route: str
+) -> None:
+    org, first = acct["org"]["id"], acct["location"]["id"]
+    response = await acct["client"].post(
+        "/v1/locations",
+        headers=acct["headers"],
+        json={
+            "name": "Second",
+            "timezone": "America/New_York",
+        },
+    )
+    second = response.json()["id"]
+    scopes = ["orders:write", "daily_sales:write"]
+    keys = {loc: await _key(acct, scopes, location_id=loc) for loc in (first, second)}
+
+    def payload(loc: str, net: int, orders: int) -> dict[str, Any]:
+        if route == "daily-sales":
+            return _daily(loc, net=net, orders=orders)
+        return _orders(loc, net_sales=net, orders=orders)
+
+    for loc, net, count in ((first, 1000, 3), (second, 2000, 4), (first, 500, 1)):
+        result = await external.post(
+            f"/v1/ingest/{route}", headers=_auth(keys[loc]), json=payload(loc, net, count)
+        )
+        assert result.status_code == 200, result.text
+    assert await _day_totals(org, first) == (500, 1)
+    assert await _day_totals(org, second) == (2000, 4)
+    if route == "daily-sales":
+        result = await external.post(
+            f"/v1/ingest/{route}", headers=_auth(keys[first]), json=payload(first, 0, 0)
+        )
+        assert result.status_code == 200, result.text
+        assert await _day_totals(org, first) == (None, None)
+        assert await _day_totals(org, second) == (2000, 4)
+
+
+async def test_legacy_unscoped_push_ids_are_replaced_without_double_counting(
+    acct: dict[str, Any], external: httpx.AsyncClient
+) -> None:
+    org, loc = acct["org"]["id"], acct["location"]["id"]
+    key = await _key(acct, ["daily_sales:write"])
+    initial = await external.post("/v1/ingest/daily-sales", headers=_auth(key), json=_daily(loc))
+    assert initial.status_code == 200
+    # Emulate canonical rows created before location-scoped synthetic IDs.
+    async with scoped_session(uuid.UUID(org)) as db:
+        await db.execute(
+            text(
+                "UPDATE sales_orders SET external_id=replace(external_id, :prefix, '') WHERE location_id=:loc"
+            ),
+            {"prefix": f"{loc}:", "loc": loc},
+        )
+    corrected = await external.post(
+        "/v1/ingest/daily-sales", headers=_auth(key), json=_daily(loc, net=9000, orders=5)
+    )
+    assert corrected.status_code == 200, corrected.text
+    assert await _day_totals(org, loc) == (9000, 5)
+
+
 async def test_source_conflict_with_active_connector(
     acct: dict[str, Any], external: httpx.AsyncClient
 ) -> None:

@@ -1,0 +1,88 @@
+{
+  "captured_at": "2026-10-22T14:59:37.4396903Z",
+  "baseline_commit": "896e9fc",
+  "branch": "sous-hardening-retention-evals",
+  "os": "Microsoft Windows 11 Home",
+  "cpu": "AMD Ryzen 7 9850X3D 8-Core Processor",
+  "memory_bytes": 68273143808,
+  "gpu": "NVIDIA GeForce RTX 5080",
+  "gpu_driver": "616.92",
+  "gpu_vram_mib": 16303,
+  "python": "3.14.3",
+  "uv": "0.10.9",
+  "database": "chefos_desktop_eval",
+  "postgres": "17.6",
+  "postgres_host_port": 55432,
+  "migration": "0015",
+  "fixture": "square-simulator-400d-v1",
+  "fixture_seed_clock": "2026-10-22T14:55:56.552942+00:00",
+  "ollama": {
+    "version": "0.40.8"
+  },
+  "ollama_environment": {
+    "OLLAMA_FLASH_ATTENTION": "1",
+    "OLLAMA_NUM_PARALLEL": "1",
+    "OLLAMA_HOST": "127.0.0.1:11434",
+    "OLLAMA_KV_CACHE_TYPE": "f16"
+  },
+  "loaded_models": [
+    {
+      "name": "qwen3:8b",
+      "model": "qwen3:8b",
+      "size": 9986438594,
+      "digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+      "details": {
+        "parent_model": "",
+        "format": "gguf",
+        "family": "qwen3",
+        "families": [
+          "qwen3"
+        ],
+        "parameter_size": "8.2B",
+        "quantization_level": "Q4_K_M"
+      },
+      "expires_at": "2026-10-22T11:04:42.553479-04:00",
+      "size_vram": 9986438594,
+      "context_length": 32768,
+      "runner": "llamacpp"
+    }
+  ],
+  "request_options": {
+    "temperature": 0,
+    "num_predict": 2048,
+    "num_ctx": 32768,
+    "stream": false,
+    "think": false
+  },
+  "provider_timeout_seconds": 90,
+  "request_timeout_seconds": 120,
+  "tool_timeout_seconds": 10,
+  "max_rounds": 4,
+  "max_tool_calls": 6,
+  "max_context_bytes": 28000,
+  "server_cache_confirmation": "llama_kv_cache: size = 4608.00 MiB (32768 cells, 36 layers, 1/1 seqs), K (f16): 2304.00 MiB, V (f16): 2304.00 MiB",
+  "node": "24.19.0",
+  "npm": "11.17.0",
+  "fixture_counts": {
+    "orders": 51097,
+    "timecards": 6540,
+    "sales_dates": 400,
+    "published_shifts": 110,
+    "inventory_items": 15,
+    "sales_date_min": "2025-09-17",
+    "sales_date_max": "2026-10-21"
+  },
+  "source_sha256": {
+    "app/formatting.py": "1b52c534b9f35955295c0a07a124d1b83513693b5da3e2505607553b5c338962",
+    "app/sous/prompt.py": "0b35876535d6c0a47f834ee54fc2220979d12ac388a0f475b4a44ca7cb70aac8",
+    "app/sous/orchestrator.py": "6dfbf3072aaa817272cbb1e14cd83b31f2c2298d452a787fb9ff63ce4425d49d",
+    "app/sous/claims.py": "5c260632e09dcd6102f1b609be5941117b5c399f659d00dc0e80fa38e2be14f8",
+    "app/sous/tools.py": "074cc7bff2bc8a73a9be87e55bfe02ec8ee25b71497e669b9b0bf70edbdcdf43",
+    "app/sous/service.py": "5c623055d53b9d2eeb54ee86854c18b71d1ee86d0779775fdd8e73322c4787a7",
+    "app/team/requests.py": "3ac73f8a3b5dcd32eff3403be8c3b4df898a35cdfa11cfb2ed97ff137d343349",
+    "evals/sous/cases.yaml": "9b868da5ca079bdfb918a0e119b920dcf0208a1837db83f38f53bc990b81b222",
+    "evals/sous/run.py": "2132f66deb2d516966aad74ddf13853fb3438063215006ac08dc3e85ebceb6f0",
+    "uv.lock": "bc75a047c67b1bb8ed17e0c993b57f1e16d1b213c40a6f442dde7b2f87b51f0e",
+    "../web/package-lock.json": "3a8ae5b87f8d03dd0d7e4a9250f6117020f62806b967e236f59bd805b707728c"
+  }
+}

@@ -226,6 +226,9 @@ export type SousToolCall = {
 };
 
 export type SousAnswer = {
+  conversation_id: string;
+  turn_id: string;
+  conversation_version: number;
   kind: SousKind;
   answer: string;
   period: { from: string; to: string; timezone: string } | null;
@@ -248,12 +251,13 @@ export type SousToolEvent = {
 };
 export type SousErrorEvent = { status: number; code: string; detail: string };
 
-export type SousTurn = { role: "user" | "assistant"; content: string };
+export type SousConversationEvent = { conversation_id: string; turn_id: string };
 
 export type SousAskInput = {
   question: string;
   location_id: string;
-  history?: SousTurn[];
+  conversation_id?: string;
+  turn_id: string;
 };
 
 // GET /v1/sous/briefing: deterministic, no model. `unavailable` = the source failed or isn't

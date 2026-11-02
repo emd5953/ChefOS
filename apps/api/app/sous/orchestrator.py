@@ -1,15 +1,15 @@
 """Sous orchestration: model rounds, tool execution, grounding check, deterministic extras.
 
-The model picks tools and explains what they return. Scope, numbers, evidence and limitations
-are all produced by code. Prompts and tool results are never logged.
+The model picks tools and selects current-result facts. Scope, answer text, numbers, evidence
+and limitations are all produced by code. Prompts and tool results are never logged.
 """
 
 import asyncio
 import json
 import re
 import time
-from collections.abc import AsyncIterator, Callable
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, aclosing, suppress
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -24,12 +24,13 @@ from app.errors import ProblemError
 from app.identity.models import Location
 from app.integrations.providers.square.business_date import business_date, get_zone
 from app.security.sessions import AuthContext
-from app.sous import fallback, prompt, tools, validator
-from app.sous.llm import LLMProvider, LLMReply, Message
+from app.sous import claims, fallback, prompt, tools
+from app.sous.llm import LLMProvider, LLMReply, Message, context_fits
 from app.sous.schemas import (
     AskIn,
     Evidence,
     Heartbeat,
+    HistoryTurn,
     Kind,
     Period,
     SousAnswer,
@@ -43,8 +44,11 @@ from app.sous.tools import ToolResult
 MAX_ROUNDS = 4
 MAX_TOOL_CALLS = 6
 HEARTBEAT_SECONDS = 10.0
+REQUEST_TIMEOUT_SECONDS = 120.0
+TOOL_TIMEOUT_SECONDS = 10.0
 
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
+AuthorizationCheck = Callable[[], Awaitable[None]]
 
 _tracer = trace.get_tracer("chefos.sous")
 _THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
@@ -59,7 +63,7 @@ _STREAM_NAMES = {
 def strip_think(text: str) -> str:
     """Drop qwen-style reasoning blocks (a stray closing tag keeps only what follows it)."""
     text = _THINK.sub("", text)
-    return text.rsplit("</think>", 1)[-1].replace("<think>", "").strip()
+    return text.rsplit("</think>", 1)[-1].split("<think>", 1)[0].strip()
 
 
 def plain_text(text: str) -> str:
@@ -195,14 +199,23 @@ async def _call_tool(
     now: datetime,
     model: str,
     parent: Context,
+    authorize: AuthorizationCheck | None = None,
 ) -> tuple[ToolResult, ToolEvent]:
     with _tracer.start_as_current_span("sous.tool", context=parent) as span:
         t0 = time.perf_counter()
         # Recheck the caller's location scope on every call; the tool refuses before querying.
-        allowed = await ctx.allowed_location_ids()
-        # A session per tool call: no connection is held while the model is thinking.
-        async with open_session() as db:
-            result = await tools.run_tool(name, args, db, ctx.org_id, loc, now, allowed=allowed)
+        try:
+            async with asyncio.timeout(TOOL_TIMEOUT_SECONDS):
+                if authorize is not None:
+                    await authorize()
+                allowed = await ctx.allowed_location_ids()
+                # A session per tool call: no connection is held while the model is thinking.
+                async with open_session() as db:
+                    result = await tools.run_tool(
+                        name, args, db, ctx.org_id, loc, now, allowed=allowed
+                    )
+        except TimeoutError:
+            result = ToolResult(tool=name, ok=False, data={"error": "The tool timed out."})
         ms = round((time.perf_counter() - t0) * 1000)
         span.set_attributes(
             {
@@ -219,7 +232,7 @@ async def _call_tool(
 
 async def _chat(
     provider: LLMProvider, messages: list[Message], specs: list[dict[str, Any]]
-) -> AsyncIterator[Heartbeat | LLMReply]:
+) -> AsyncGenerator[Heartbeat | LLMReply]:
     """One model call, yielding a heartbeat every HEARTBEAT_SECONDS until the reply arrives."""
     task = asyncio.ensure_future(provider.chat(messages, specs))
     try:
@@ -232,6 +245,8 @@ async def _chat(
     finally:
         if not task.done():
             task.cancel()  # the client went away
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 async def events(
@@ -242,7 +257,9 @@ async def events(
     now: datetime | None = None,
     *,
     open_session: SessionFactory | None = None,
-) -> AsyncIterator[SousEvent]:
+    history: list[HistoryTurn] | None = None,
+    authorize: AuthorizationCheck | None = None,
+) -> AsyncGenerator[SousEvent]:
     """Progress events for one question, ending with the SousAnswer (or raising ProblemError)."""
     now = now or datetime.now(UTC)
     sessions = open_session or (lambda: scoped_session(ctx.org_id))
@@ -251,10 +268,35 @@ async def events(
     t0 = time.perf_counter()
     answer: SousAnswer | None = None
     try:
-        async for event in _run(ctx, loc, req, provider, now, sessions, set_span_in_context(span)):
-            if isinstance(event, SousAnswer):
-                answer = event
-            yield event
+        deadline = time.monotonic() + REQUEST_TIMEOUT_SECONDS
+        # Keep timeout scopes out of generator yields: cancellation belongs to the active
+        # operation, never to the SSE consumer while it is sending a heartbeat.
+        async with aclosing(
+            _run(
+                ctx,
+                loc,
+                req,
+                provider,
+                now,
+                sessions,
+                set_span_in_context(span),
+                history or [],
+                authorize,
+            )
+        ) as stream:
+            while True:
+                try:
+                    async with asyncio.timeout(max(0, deadline - time.monotonic())):
+                        event = await anext(stream)
+                except StopAsyncIteration:
+                    break
+                except TimeoutError as exc:
+                    raise ProblemError(
+                        504, "sous_timeout", "Sous took too long. Try a narrower question."
+                    ) from exc
+                if isinstance(event, SousAnswer):
+                    answer = event
+                yield event
     finally:
         span.set_attributes(
             {
@@ -278,11 +320,25 @@ async def ask(
     now: datetime | None = None,
     *,
     open_session: SessionFactory | None = None,
+    history: list[HistoryTurn] | None = None,
+    authorize: AuthorizationCheck | None = None,
 ) -> SousAnswer:
     """The non-streaming form: drain events() and return the answer."""
-    async for event in events(ctx, loc, req, provider, now, open_session=open_session):
-        if isinstance(event, SousAnswer):
-            return event
+    async with aclosing(
+        events(
+            ctx,
+            loc,
+            req,
+            provider,
+            now,
+            open_session=open_session,
+            history=history,
+            authorize=authorize,
+        )
+    ) as stream:
+        async for event in stream:
+            if isinstance(event, SousAnswer):
+                return event
     raise RuntimeError("Sous finished without an answer")
 
 
@@ -294,10 +350,15 @@ async def _run(
     now: datetime,
     sessions: SessionFactory,
     parent: Context,
-) -> AsyncIterator[SousEvent]:
+    history: list[HistoryTurn],
+    authorize: AuthorizationCheck | None,
+) -> AsyncGenerator[SousEvent]:
     try:
-        async for event in _model_run(ctx, loc, req, provider, now, sessions, parent):
-            yield event
+        async with aclosing(
+            _model_run(ctx, loc, req, provider, now, sessions, parent, history, authorize)
+        ) as stream:
+            async for event in stream:
+                yield event
     except ProblemError as exc:
         if exc.code != "sous_unavailable":
             raise
@@ -307,7 +368,7 @@ async def _run(
             raise
         yield StatusEvent(label="The assistant model isn't responding, so using a quick answer")
         result, event = await _call_tool(
-            plan.tool, plan.args, sessions, ctx, loc, now, "fallback", parent
+            plan.tool, plan.args, sessions, ctx, loc, now, "fallback", parent, authorize
         )
         yield event
         if not result.ok:
@@ -334,15 +395,30 @@ async def _model_run(
     now: datetime,
     sessions: SessionFactory,
     parent: Context,
-) -> AsyncIterator[SousEvent]:
+    history: list[HistoryTurn],
+    authorize: AuthorizationCheck | None,
+) -> AsyncGenerator[SousEvent]:
     messages: list[Message] = [
         {"role": "system", "content": prompt.build_system_prompt(loc, now)},
-        *({"role": t.role, "content": t.content} for t in req.history),
-        {"role": "user", "content": req.question},
+        *({"role": t.role, "content": t.content} for t in history),
     ]
+    if history:
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "The next user message continues this conversation in a new turn. "
+                    "Use the prior questions to resolve its metric and period. No tools "
+                    "have run for THIS turn and no fact IDs exist yet. Fetch fresh tool "
+                    "facts before answering, including when confirming a previous figure."
+                ),
+            }
+        )
+    messages.append({"role": "user", "content": req.question})
     specs = tools.tool_specs()
     used: list[ToolUse] = []
     results: list[ToolResult] = []
+    facts: dict[str, str] = {}
     retried = False
 
     def finish(kind: Kind, text: str) -> SousAnswer:
@@ -361,12 +437,21 @@ async def _model_run(
 
     yield StatusEvent(label="Thinking")
     for round_no in range(MAX_ROUNDS):
+        if not context_fits(messages, specs):
+            # Preserve collected evidence instead of silently truncating facts/rules.
+            yield finish(
+                "evidence_only",
+                "This conversation is too large to verify. Start a new conversation "
+                "or narrow the question.",
+            )
+            return
         reply: LLMReply | None = None
-        async for item in _chat(provider, messages, specs):
-            if isinstance(item, Heartbeat):
-                yield item
-            else:
-                reply = item
+        async with aclosing(_chat(provider, messages, specs)) as chat:
+            async for item in chat:
+                if isinstance(item, Heartbeat):
+                    yield item
+                else:
+                    reply = item
         assert reply is not None
         if reply.tool_calls:
             if round_no == MAX_ROUNDS - 1:
@@ -378,36 +463,53 @@ async def _model_run(
                     messages.append(_tool_message(call.name, limit))
                     continue
                 result, event = await _call_tool(
-                    call.name, call.arguments, sessions, ctx, loc, now, provider.model, parent
+                    call.name,
+                    call.arguments,
+                    sessions,
+                    ctx,
+                    loc,
+                    now,
+                    provider.model,
+                    parent,
+                    authorize,
                 )
                 results.append(result)
                 used.append(ToolUse(**event.model_dump(exclude={"label"})))
-                messages.append(_tool_message(call.name, result.data))
+                new_facts = claims.catalog(result, len(results) - 1)
+                facts.update(new_facts)
+                messages.append(
+                    _tool_message(call.name, {"facts": new_facts} if result.ok else result.data)
+                )
                 yield event
             yield StatusEvent(label="Reading the results")
             continue
 
-        kind, text = split_kind(plain_text(strip_think(reply.content)))
-        bad: list[str] = []
-        if kind == "answer" and text:
-            bad = validator.ungrounded_numbers(text, (r.data for r in results if r.ok))
-        if text and not bad:
-            yield finish(kind, text)
+        rendered = claims.render(strip_think(reply.content), facts)
+        if rendered is not None:
+            yield finish(*rendered)
             return
         if retried:
             break
         retried = True
-        yield StatusEvent(label="Double-checking the numbers")
+        yield StatusEvent(label="Double-checking the answer")
         messages.append(_assistant(reply.content))
         messages.append(
             {
                 "role": "user",
                 "content": (
-                    "These numbers in your answer do not appear in the tool results: "
-                    f"{', '.join(bad)}. Rewrite the answer using only numbers exactly as the "
-                    "tool results give them. Call a tool if you need other numbers."
-                    if bad
-                    else "Your reply was empty. Answer the question."
+                    "Your reply could not be verified. "
+                    + (
+                        "No facts exist for this question. You must call a tool to fetch the "
+                        "requested metric and period before returning any answer claims. "
+                        "IDs in examples and history are not available facts. "
+                        if not facts
+                        else "Return only JSON with kind and claims. Start with { and end "
+                        "with }. Do not prefix it with Answer: or include markdown, prose, "
+                        "values or labels. Choose only exact IDs from the tool facts for the "
+                        "requested metric and period. "
+                    )
+                    + 'Otherwise return {"kind":"clarify","reason":"period"} or '
+                    '{"kind":"unsupported"}.'
                 ),
             }
         )

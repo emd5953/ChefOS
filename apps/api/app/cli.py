@@ -800,6 +800,14 @@ async def seed_team(org_id: uuid.UUID, owner_user_id: uuid.UUID) -> None:
         print(f"Published {late} shift(s) today with no clock-in ({alerts} clock-in alerts).")
 
 
+@command("purge-sous", "Delete a bounded batch of expired, inactive Sous conversations")
+async def purge_sous(_: argparse.Namespace) -> int:
+    from app.sous.retention import cleanup
+
+    print(f"Deleted {await cleanup()} expired Sous conversations.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="command", required=True)

@@ -1238,8 +1238,6 @@ async def receive_purchase_order(
     if not (order := po.first()):
         raise not_found("Purchase order not found")
     await _location(ctx, db, order.location_id)
-    if order.status == "closed":
-        raise _conflict("Reopen this purchase order before receiving")
     await db.execute(
         text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
         {"key": f"{ctx.org_id}:{body.idempotency_key}"},
@@ -1255,7 +1253,35 @@ async def receive_purchase_order(
             text("SELECT * FROM receipt_lines WHERE org_id=:org AND receipt_id=:id ORDER BY id"),
             {"org": ctx.org_id, "id": prior.id},
         )
-        return {**_row(prior), "lines": [_row(row) for row in original_lines]}
+        saved_lines = list(original_lines)
+        saved = {
+            row.purchase_order_line_id: (row.received_base_quantity, row.total_cost_minor)
+            for row in saved_lines
+        }
+        requested = {
+            line.line_id: (line.received_base_quantity, line.total_cost_minor)
+            for line in body.lines
+        }
+        # The posted quantities/costs and approval reasons are durable, including receipts
+        # created before this check existed. Compare semantics, independent of line order.
+        details = await db.scalar(
+            text(
+                "SELECT details FROM audit_events WHERE org_id=:org AND entity_id=:id "
+                "AND entity_type='receipt' AND action='posted'"
+            ),
+            {"org": ctx.org_id, "id": prior.id},
+        )
+        saved_overages = {
+            entry["line_id"]: entry["reason"] for entry in (details or {}).get("overages", [])
+        }
+        requested_overages = {
+            str(line.line_id): str(line.reason) for line in body.lines if line.accept_overage
+        }
+        if saved != requested or saved_overages != requested_overages:
+            raise _conflict("This idempotency key was already used with a different request")
+        return {**_row(prior), "lines": [_row(row) for row in saved_lines]}
+    if order.status == "closed":
+        raise _conflict("Reopen this purchase order before receiving")
     business_day = _location_business_date(await _location(ctx, db, order.location_id))
     receipt_id = uuid.uuid7()
     await db.execute(

@@ -1,7 +1,7 @@
 COMPOSE := docker compose --env-file .env -f infra/docker-compose.yml
 API := cd apps/api && uv run
 
-.PHONY: up down reset migrate seed demo test lint fmt web smoke logs env sous-eval
+.PHONY: up down reset migrate seed demo test lint fmt web smoke logs env sous-eval sous-cleanup
 
 env:
 	@test -f .env || { cp .env.example .env; echo "created .env"; }
@@ -59,3 +59,7 @@ logs:
 # Sous model eval against the demo org (needs Ollama and a seeded demo). Extra flags: ARGS="--limit 5"
 sous-eval:
 	cd apps/api && OLLAMA_URL=$${OLLAMA_URL:-http://localhost:11434} uv run python -m evals.sous.run $(ARGS)
+
+# Same bounded sweep as the hourly worker maintenance.
+sous-cleanup:
+	$(API) python -m app.cli purge-sous

@@ -767,6 +767,16 @@ PROCESSORS = {
 }
 
 
+async def _lock_ingestion(db: AsyncSession, ctx: ConnCtx) -> None:
+    # Incremental sync's session lock does not cover webhooks, backfills or deferred replay.
+    # Serialize before reading canonical versions, including absent rows. Otherwise an upsert
+    # can win after that read while its child replacement and old-date rebuild use stale state.
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": f"ingest:{ctx.org_id}:{ctx.connection_id}"},
+    )
+
+
 async def ingest(
     db: AsyncSession,
     ctx: ConnCtx,
@@ -776,6 +786,7 @@ async def ingest(
     now: datetime,
 ) -> BatchResult:
     """Land then process one batch of fetched items for `stream`."""
+    await _lock_ingestion(db, ctx)
     landed, new_count = await land_raw(db, ctx, stream, items, run_id, now)
     # Small full-refresh streams re-apply everything; fact streams only new payloads.
     work = (
@@ -797,6 +808,7 @@ async def process_pending(
     """Normalize raw records that were deferred (for example, until a location got linked)."""
     from sqlalchemy import select
 
+    await _lock_ingestion(db, ctx)
     rows = (
         await db.execute(
             select(RawRecord)

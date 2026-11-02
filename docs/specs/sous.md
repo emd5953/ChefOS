@@ -142,13 +142,14 @@ v1 tools cover Commerce and data freshness. `get_labor_summary`, `get_schedule` 
 ```
 POST /v1/sous/ask     (session + X-CSRF-Token)
   in:  { question: str (1..500 chars), location_id: uuid,
-         history?: [{ role: "user" | "assistant", content: str }]  (max 10 turns) }
+         conversation_id?: uuid, turn_id?: uuid }
   out: SousAnswer
 GET  /v1/sous/status  (session)
   out: { provider: "ollama" | "fake", model: str, available: bool, model_pulled: bool, prompt_version: str }
        # available = provider reachable and the configured model pulled
 
 SousAnswer {
+  conversation_id: uuid; turn_id: uuid; conversation_version: int
   kind: "answer" | "clarify" | "refuse" | "unsupported" | "evidence_only"
   answer: str                                   # markdown-free plain text
   period: { from: date, to: date, timezone: str } | null
@@ -182,8 +183,8 @@ Dates are ISO `YYYY-MM-DD` business dates. Validation rejects `to < from`, range
 
 1. Build the system prompt (`PROMPT_VERSION`, metric definitions from the PRD, tool list, today's date).
 2. Call the model with tools. Execute tool calls (max 4 rounds, 6 calls total), feed results back.
-3. The final model text is the answer. The model signals clarify, refuse or unsupported by starting its reply with `CLARIFY:`, `REFUSE:` or `UNSUPPORTED:`. The orchestrator strips the prefix and sets `kind`. Only `answer` and `evidence_only` carry `period`, `evidence` and `limitations`. If the model is still calling tools in round 4, or answers twice without a grounded reply, the result is `evidence_only`.
-4. **Validator:** every number in the answer must match a value in the tool results after formatting: money as dollars at 0 or 2 decimals, percents at 0 or 1 decimal, counts exact. A `$` figure must match a money field and a `%` figure a percent field. Dates, clock times, years, ordinals, list markers and digits inside returned item names are exempt. Shorthand such as `$52.9k` is never accepted; the prompt asks for exact figures. Tool data gives money in dollars (fields ending `_usd`) and percents in percent units, so the model doesn't convert. On failure, retry once with the offending numbers named. On a second failure, return `kind: "evidence_only"` with a deterministic one-line answer and the evidence table.
+3. The final model response selects server-generated facts with JSON: `{"kind":"answer","claims":["r0.net_sales_usd"]}`. Each ID belongs to one current-question result and resolves to code-authored text binding the metric, entity, period, sign and unit. Model prose, value overrides, extra fields, duplicate IDs and unknown IDs are rejected. Only successful tools supply facts. Sales, daily breakdowns, items, unknown labor, published shifts, stock units and freshness all have deterministic renderers in `app/sous/claims.py`.
+4. **Semantic validation:** parse the strict selection, resolve every ID, then render. Retry an invalid selection once; a second failure or exhausted rounds produces deterministic `evidence_only` with the collected evidence. Clarifications use a controlled `reason` (`period`, `metric`, `comparison`, `question`); refusals and unsupported responses use fixed text. Legacy control prefixes are accepted only as classification signals—their entire prose is discarded. The old numeric matcher remains a diagnostic helper, not the output safety boundary or quality gate. Only `answer` and `evidence_only` carry `period`, `evidence` and `limitations`.
 5. `limitations` is deterministic: one line for each `stale`, `failing` or `not_connected` stream touched, naming the stream and as-of time, plus any failed tool.
 6. Tool results are typed fields. Free text from POS data, such as item names, is passed as data, and the system prompt says so.
 
@@ -208,6 +209,27 @@ Config:
   - kind accuracy
   - authorization violations
   - p50/p95 latency
+- `make sous-eval ARGS="--repeat 2 --gate --json /tmp/sous-eval.json"` repeats the full set
+  at one frozen business clock and checkpoints each case. Reports include model digest/runtime,
+  prompt version, case/runner hashes, per-category and per-repeat metrics, and explicit gate
+  failures. The gate requires ≥95% pass rate, ≥95% semantic value correctness and evidence
+  coverage, 100% grounded responses, and zero authorization violations, unresolved expected
+  values, request errors or fallback responses. Empty/incomplete runs and fake providers fail.
+  Freshness coverage uses its exact expected stream-status fact because that tool returns
+  metadata without numeric evidence cards. Expected values match complete server-rendered
+  facts, preserving metric, entity,
+  period, sign and unit. Wrong-kind responses stay in the denominator. A permitted refusal in
+  a `kind_any` injection case has no value requirement.
+- The desktop run on 2026-10-22 completed **106/106 passing cases**, **90/90 semantic values**,
+  and **74/74 evidence coverage**, with no errors, fallbacks or authorization violations.
+  See the [full report](../../apps/api/evals/sous/results/2026-10-22.md) for the exact model
+  digest, f16 runtime, failures/fixes, regression checks and remaining limitations. Eval
+  reports also record raw model replies and tool arguments for diagnosis; use synthetic data.
+- For an isolated synthetic dataset without Temporal, point `DATABASE_URL` and
+  `MIGRATIONS_DATABASE_URL` at a dedicated database ending in `_eval`, apply migrations, then
+  run `python -m evals.sous.seed`. It uses 400 days of the existing Square simulator through
+  normal ingestion, the published schedule demo, and inventory demo. Record the fixture with
+  `--fixture square-simulator-400d-v1`. This is real model inference over synthetic data.
 - CI runs the deterministic tests (tools, validator, scope, prompt injection) with `FakeProvider`. The model eval runs locally, because the model doesn't run on CI.
 
 ## v1.1: streaming, short sessions, circuit breaker, fallback
@@ -221,8 +243,8 @@ Config:
 - The orchestrator takes an `open_session` factory instead of a session:
 
 ```
-orchestrator.events(ctx, loc, req, provider, now=None, *, open_session=None) -> AsyncIterator[SousEvent]
-orchestrator.ask(ctx, loc, req, provider, now=None, *, open_session=None) -> SousAnswer   # drains events()
+orchestrator.events(ctx, loc, req, provider, now=None, *, open_session=None, history=None) -> AsyncIterator[SousEvent]
+orchestrator.ask(ctx, loc, req, provider, now=None, *, open_session=None, history=None) -> SousAnswer   # drains events()
 ```
 
 `open_session` defaults to `lambda: scoped_session(ctx.org_id)`.
@@ -232,6 +254,7 @@ orchestrator.ask(ctx, loc, req, provider, now=None, *, open_session=None) -> Sou
 `POST /v1/sous/ask/stream` takes the same body as `/ask` and returns `text/event-stream`. Auth, CSRF, location scope, the rate limit and an open breaker with no fallback all fail before the stream starts, as ordinary problem+json responses. Once the stream starts, the server sends these events:
 
 ```
+event: conversation data: { conversation_id, turn_id }            # HTTP layer reserves first
 event: status   data: { "label": str }                         # "Thinking", "Double-checking the numbers"
 event: tool     data: { "name", "args", "ms", "ok", "label" }  # after each tool call; label e.g. "Checked sales for Oct 12 – Oct 18"
 event: answer   data: SousAnswer                               # always last on success
@@ -277,7 +300,7 @@ The registry signatures above name `location_ids`. As with the v1 tools, that sc
 | `get_schedule` → `ScheduleFacts` | `from`, `to` | `published_shifts` of published `schedules` | 14 days, up to 56 days ahead, 400 back; shifts listed only for ≤2 days, at most 60 |
 | `find_items_below_par` → `ItemFacts` | `limit?: 1..50` (default 25) | active `inventory_items` with this location's `inventory_pars` and `inventory_levels` | 50 items listed, 10 no-par names |
 
-The `*Facts` models live in `app/sous/schemas.py` and are dumped to JSON for the model, so the shape is typed and versioned with the prompt.
+The `*Facts` models live in `app/sous/schemas.py`. Since prompt 8, the orchestrator converts their data to a catalog of rendered facts before sending it to the model.
 
 - **Labor.** Actual paid hours and cost from timecards, labor % = cost / net sales (the `get_sales_summary` definition). `daily_labor` has a row only for days with timecards, so a day without one is reported as unknown (`labor_hours: null`), never zero. With no timecards at all, hours, cost and labor % are null. `scheduled_hours` is not used.
 - **Schedule.** Published shifts only; drafts are never shown. Every range returns per-day totals (shifts, scheduled hours) and the range total. Individual shifts are listed only for ranges of up to 2 days; longer ranges return an empty `shifts` and a `shifts_note`, so the model reports totals instead of tables. Each listed shift has the business date it starts on, local start and end times ("10pm"), `ends_next_day` for overnight shifts, and paid hours. Days not covered by a published week are listed in `unpublished_dates`. `draft_has_unpublished_changes` says the draft differs from what employees see, without showing it. Costs and rates are not returned.
@@ -304,3 +327,86 @@ Adds labor-hours, scheduled-hours and below-par definitions, tool-choice guidanc
 ### Known limits (unchanged)
 
 The rate limit and the breaker are per-process memory. With more than one API process, each one counts on its own, so they move to Postgres or Redis before that happens.
+
+## Production hardening, 2026-10-22
+
+The HTTP endpoints refresh session validity, staff role and location access after each tool
+step and before delivering an answer. Revocation stops the request before tool results can
+reach another model round or an answer can reach the caller. Streaming clients receive an
+`error` event if access changes after headers have been sent.
+
+Prompt `sous-prompt-8` replaces free-form factual answers with validated fact selections and
+server rendering. This closes metric/period swaps, sign and percentage-point confusion,
+qualitative assertions and invented action claims in generated prose. Controlled response
+kinds cannot bypass the output boundary. External names are quoted and escaped inside
+server-authored facts; name filtering remains defense in depth. Unfinished `<think>` blocks
+are discarded. Tool/date selection and relevance to the user's intent still require live-model
+evaluation; truthful facts alone do not prove the question was interpreted correctly.
+
+Prompt `sous-prompt-11` clarifies the raw JSON contract and restricts selections to requested
+metrics. A server-authored reminder after stored history tells the model that the new turn
+has no facts yet; it must fetch current facts using the metric/period from prior questions.
+Repair feedback distinguishes missing current facts from malformed selections. The renderer
+still requires exact current-question IDs and discards all model-authored prose. Freshness,
+inventory and briefing timestamps use portable date formatting on Windows and Unix.
+
+Migration `0014` adds `sous_conversations` and `sous_turns`. Both require organization AND user
+scope in PostgreSQL RLS. Conversations bind one location; even another owner in the same org
+cannot read or clear them. HTTP requests accept a new question, optional conversation ID and
+client turn ID; nonempty client history is rejected. The HTTP layer loads the last five
+completed pairs (assistant context capped at 2,000 characters per answer) into an internal
+orchestrator argument. It never accepts browser-supplied assistant turns.
+
+Short transactions reserve a turn, load history and commit an answer. No history transaction
+remains open during inference. A per-user request key handles retries even before the browser
+receives its conversation ID; row locks serialize turns within a conversation. Completed
+retries replay the original answer, including during an open breaker. Active attempts get
+409. Failures/cancellation release the reservation; a 180-second lease recovers crashed workers,
+and an attempt token fences late commits. A failed retry after a later completion gets 409.
+Answers are committed before JSON/SSE delivery. The browser handles the initial `conversation`
+event, retains the turn ID for Retry, and clears server history through DELETE. Location changes
+still start a fresh UI conversation; the browser does not restore conversations after reload.
+
+Conversations cap completed turns at 200. Clearing cascades through turns and invalidates any
+active completion. Migration `0015` adds a fixed `expires_at` deadline: 24 hours after creation
+until the first answer commits, then 30 days after creation. This includes clarifications,
+refusals, and fallback answers. Follow-ups and retries never extend it. Existing rows are
+backfilled using the same policy. Expired histories cannot be loaded or replayed (410 while
+still stored, 404 after cleanup); Clear remains usable. An already running request may finish.
+
+The existing worker runs a cleanup task on startup and every hour, independently of its sync
+and backfill queues. Each sweep caps work at ten batches of 100, commits each batch, skips
+locked rows and unexpired request leases, and cascades turns when deleting their conversation.
+Multiple workers can clean safely; failures are logged and retried the next hour without
+stopping workflows. Shutdown cancels and joins the maintenance task. `make sous-cleanup` (or
+`python -m app.cli purge-sous`) runs the same bounded sweep for operations/recovery; repeat it
+for large backlogs. Cleanup needs a running worker or that command. Backups are governed by
+the deployment's separate backup policy.
+
+A schema-qualified SECURITY DEFINER function exposes only this fixed expiry policy and a
+bounded batch size (1–1,000), returns a count, has a locked search path, and grants execution
+only to `chefos_app`. The application does not receive general access to private histories.
+Deploy migrations through `0015` before the matching API/worker/web changes.
+
+Resource limits are enforced in code:
+
+| Resource | Limit / behavior |
+| --- | --- |
+| Whole question | 120 seconds across rounds, tools and fallback; `sous_timeout` (504), or an SSE error |
+| One tool | 10 seconds including session acquisition; failed tool result, transaction cleanup |
+| One model call | `SOUS_TIMEOUT_SECONDS` (default 90) as a wall-clock deadline, plus HTTP inactivity/connect timeouts |
+| Concurrent model calls | 4 per API process; excess calls get `sous_busy` (503), HTTP Retry-After 5 seconds |
+| Model input | 28,000 UTF-8 bytes of serialized messages plus tool schemas; growing conversations return evidence only and ask to narrow |
+| Model context/output options | `num_ctx=32768`, `num_predict=2048`; byte budget is conservative, not an exact tokenizer count |
+| Provider response | 128,000 bytes, 16,000 content characters, 16 proposed calls, 4,000 serialized argument characters per call |
+| Execution | Existing 4 model rounds and 6 executed tools remain in place |
+
+Malformed response shapes, malformed JSON tool arguments and truncated generations are
+rejected; invalid arguments never silently become `{}`. Context/capacity rejections do not
+trip the provider breaker. Each admitted call captures the breaker's generation so an older
+success, failure or cancellation cannot alter a later recovery probe. Closing a stream closes
+its nested generators, cancels the provider task and awaits cleanup.
+
+Per-question/tool tracing and content-free provider error logs remain. These controls are
+per-process and require load testing on the intended model hardware; they do not establish
+a production latency or cost SLO. See the prioritized audit in [interview prep](../interview-prep.md#production-hardening-audit-2026-10-22).

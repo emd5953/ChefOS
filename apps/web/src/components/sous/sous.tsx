@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ApiError, isApiError } from "@/lib/api";
+import { api, ApiError, isApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 import { useLocationScope } from "@/lib/location-scope";
@@ -18,7 +18,7 @@ import type {
   SousErrorEvent,
   SousStatusEvent,
   SousToolEvent,
-  SousTurn,
+  SousConversationEvent,
 } from "@/lib/types";
 import { useReducedMotion } from "@/lib/use-reduced-motion";
 import { AnswerView } from "./answer";
@@ -26,7 +26,6 @@ import { BriefingCard } from "./briefing";
 
 const MAX_CHARS = 500;
 const COUNTER_FROM = 400;
-const MAX_HISTORY = 10;
 const FALLBACK_MODEL = "qwen3:8b";
 
 const STARTERS = [
@@ -42,12 +41,16 @@ type Message =
   | { id: number; role: "user"; text: string }
   | { id: number; role: "assistant"; state: "pending"; status: string; steps: SousToolEvent[] }
   | { id: number; role: "assistant"; state: "done"; answer: SousAnswer }
-  | { id: number; role: "assistant"; state: "error"; error: unknown; question: string };
+  | { id: number; role: "assistant"; state: "error"; error: unknown; question: string; turnId: string };
 
 type ErrorInfo = { text: string; unavailable: boolean; retry: boolean };
 
 function describeError(e: unknown): ErrorInfo {
   if (isApiError(e)) {
+    if (e.code === "sous_turn_running")
+      return { text: "The previous question is still finishing. Retry shortly.", unavailable: false, retry: true };
+    if (["sous_turn_stale", "sous_conversation_full", "sous_turn_conflict", "sous_conversation_expired"].includes(e.code))
+      return { text: e.detail ?? "Clear this conversation to start again.", unavailable: false, retry: false };
     if (e.status === 429 || e.code === "rate_limited")
       return { text: "You’re asking quickly — try again in a minute.", unavailable: false, retry: true };
     if (e.status === 503 && e.code === "sous_unavailable")
@@ -126,6 +129,9 @@ function Chat({ locationId }: { locationId: string }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [announce, setAnnounce] = useState("");
+  const [clearing, setClearing] = useState(false);
+  const [clearError, setClearError] = useState("");
+  const conversationRef = useRef<string | undefined>(undefined);
   const nextId = useRef(1);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -137,7 +143,7 @@ function Chat({ locationId }: { locationId: string }) {
   const unavailable = !checking && (status.isError || !status.data?.available);
   const pending = messages.some((m) => m.role === "assistant" && m.state === "pending");
   // Stay enabled while unavailable: the deterministic fallback may still answer.
-  const disabled = checking;
+  const disabled = checking || clearing;
 
   // Unmount (including a location change, which re-keys Chat) aborts the in-flight stream.
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -147,18 +153,8 @@ function Chat({ locationId }: { locationId: string }) {
   }, [messages, reduced]);
 
   const run = useCallback(
-    (question: string, prior: Message[]) => {
-      // `prior` ends with the question being asked; history is everything before it.
-      const history: SousTurn[] = prior
-        .slice(0, -1)
-        .flatMap((m): SousTurn[] =>
-          m.role === "user"
-            ? [{ role: "user", content: m.text }]
-            : m.state === "done"
-              ? [{ role: "assistant", content: m.answer.answer }]
-              : [],
-        )
-        .slice(-MAX_HISTORY);
+    (question: string, prior: Message[], turnId: string = crypto.randomUUID()) => {
+      setClearError("");
       const id = nextId.current++;
       setMessages([...prior, { id, role: "assistant", state: "pending", status: "Thinking", steps: [] }]);
       abortRef.current?.abort();
@@ -166,17 +162,20 @@ function Chat({ locationId }: { locationId: string }) {
       abortRef.current = controller;
       const fail = (error: unknown) => {
         setMessages((ms) =>
-          ms.map((m) => (m.id === id ? { id, role: "assistant", state: "error", error, question } : m)),
+          ms.map((m) => (m.id === id ? { id, role: "assistant", state: "error", error, question, turnId } : m)),
         );
         if (isApiError(error) && error.code === "sous_unavailable") void status.refetch();
       };
-      const input: SousAskInput = { question, location_id: locationId, history };
+      const input: SousAskInput = { question, location_id: locationId, conversation_id: conversationRef.current, turn_id: turnId };
       streamSse("/api/v1/sous/ask/stream", input, {
         signal: controller.signal,
         csrfToken,
         onEvent: ({ event, data }) => {
           if (controller.signal.aborted) return;
-          if (event === "status") {
+          if (event === "conversation") {
+            const e = parseEvent<SousConversationEvent>(data);
+            if (e?.turn_id === turnId) conversationRef.current = e.conversation_id;
+          } else if (event === "status") {
             const e = parseEvent<SousStatusEvent>(data);
             if (!e) return;
             setMessages((ms) =>
@@ -193,6 +192,7 @@ function Chat({ locationId }: { locationId: string }) {
           } else if (event === "answer") {
             const answer = parseEvent<SousAnswer>(data);
             if (!answer) return fail(new Error("Malformed answer"));
+            conversationRef.current = answer.conversation_id;
             setMessages((ms) => ms.map((m) => (m.id === id ? { id, role: "assistant", state: "done", answer } : m)));
             setAnnounce(answer.answer);
           } else if (event === "error") {
@@ -225,12 +225,13 @@ function Chat({ locationId }: { locationId: string }) {
   );
 
   const retry = useCallback(
-    (id: number, question: string) => {
+    (id: number, question: string, turnId: string) => {
+      if (pending || disabled || messages.at(-1)?.id !== id) return;
       // Drop the failed row; the question stays in the thread as the last user turn.
       const idx = messages.findIndex((m) => m.id === id);
-      run(question, messages.slice(0, idx));
+      run(question, messages.slice(0, idx), turnId);
     },
-    [messages, run],
+    [messages, pending, disabled, run],
   );
 
   const stop = () => {
@@ -240,12 +241,29 @@ function Chat({ locationId }: { locationId: string }) {
     inputRef.current?.focus();
   };
 
-  const clear = () => {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    setMessages([]);
-    setAnnounce("");
-    inputRef.current?.focus();
+  const clear = async () => {
+    if (clearing) return;
+    stop();
+    setClearing(true);
+    setClearError("");
+    try {
+      if (conversationRef.current) {
+        try {
+          await api(`/v1/sous/conversations/${conversationRef.current}`, { method: "DELETE" });
+        } catch (error) {
+          // A previous clear may have committed before its response was lost.
+          if (!isApiError(error) || error.status !== 404) throw error;
+        }
+      }
+      conversationRef.current = undefined;
+      setMessages([]);
+      setAnnounce("");
+    } catch {
+      setClearError("Could not clear the saved conversation. Please try again.");
+    } finally {
+      setClearing(false);
+      inputRef.current?.focus();
+    }
   };
 
   const onSubmit = (e: FormEvent) => {
@@ -266,6 +284,7 @@ function Chat({ locationId }: { locationId: string }) {
     <div className="mx-auto w-full max-w-3xl">
       {breakerOpen ? <BreakerNotice /> : unavailable && <OllamaNotice model={model} />}
 
+      {clearError && <p role="alert" className="mb-3 text-sm text-destructive">{clearError}</p>}
       <Card className="flex flex-col">
         <div className="min-h-[320px] space-y-5 p-4 sm:p-6">
           {messages.length === 0 ? (
@@ -310,7 +329,7 @@ function Chat({ locationId }: { locationId: string }) {
                       ) : m.state === "done" ? (
                         <AnswerView answer={m.answer} />
                       ) : (
-                        <ErrorRow error={m.error} model={model} onRetry={() => retry(m.id, m.question)} />
+                        <ErrorRow error={m.error} model={model} onRetry={!pending && !disabled && messages.at(-1)?.id === m.id ? () => retry(m.id, m.question, m.turnId) : undefined} />
                       )}
                     </div>
                   )}
@@ -358,7 +377,8 @@ function Chat({ locationId }: { locationId: string }) {
               {messages.length > 0 && (
                 <button
                   type="button"
-                  onClick={clear}
+                  onClick={() => void clear()}
+                  disabled={clearing}
                   className="inline-flex items-center gap-1 rounded font-medium hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 >
                   <Trash2 className="size-3" aria-hidden /> Clear conversation
@@ -409,12 +429,12 @@ function Thinking({ status, steps, onStop }: { status: string; steps: SousToolEv
   );
 }
 
-function ErrorRow({ error, model, onRetry }: { error: unknown; model: string; onRetry: () => void }) {
+function ErrorRow({ error, model, onRetry }: { error: unknown; model: string; onRetry?: () => void }) {
   const info = describeError(error);
   return (
     <div role="alert" className="space-y-2">
       {info.unavailable ? <OllamaNotice model={model} /> : <p className="text-[13px] text-destructive">{info.text}</p>}
-      {info.retry && (
+      {info.retry && onRetry && (
         <Button variant="outline" size="sm" onClick={onRetry}>
           <RotateCw aria-hidden /> Try again
         </Button>

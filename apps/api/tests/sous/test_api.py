@@ -46,10 +46,10 @@ async def test_ask_returns_the_sous_answer_shape(
     out = r.json()
     assert set(out) == {
         "kind", "answer", "period", "evidence", "limitations", "tools_used", "model",
-        "prompt_version", "request_id", "mode",
+        "prompt_version", "request_id", "mode", "conversation_id", "turn_id", "conversation_version",
     }  # fmt: skip
     assert out["mode"] == "model"
-    assert out["kind"] == "clarify" and out["answer"] == "Which week do you mean?"
+    assert out["kind"] == "clarify" and "date range" in out["answer"]
     assert out["period"] is None and out["evidence"] == [] and out["tools_used"] == []
     assert out["prompt_version"] == prompt.PROMPT_VERSION
     assert out["request_id"] == r.headers["x-request-id"]
@@ -66,7 +66,7 @@ async def test_ask_with_tools_serializes_period_and_evidence(
                         ToolCall("get_sales_summary", {"from": "2026-03-01", "to": "2026-03-01"})
                     ]
                 ),
-                LLMReply(content="You had no sales."),
+                LLMReply(content='{"kind":"answer","claims":["r0.net_sales_usd"]}'),
             ]
         )
     )
@@ -127,12 +127,14 @@ async def test_invalid_requests_are_422(
     problem(await post(bare, payload), 422, "validation_error")
 
 
-async def test_ten_history_turns_are_allowed(bare: Connected, use_provider: UseProvider) -> None:
+async def test_client_history_is_rejected_before_inference(
+    bare: Connected, use_provider: UseProvider
+) -> None:
     fake = FakeProvider([LLMReply(content="UNSUPPORTED: No.")])
     use_provider(fake)
     turns = [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}] * 5
     r = await post(bare, body(bare, history=turns))
-    assert r.status_code == 200 and len(fake.calls[0]) == 12
+    assert r.status_code == 422 and fake.calls == []
 
 
 async def test_other_orgs_location_is_not_found(
@@ -296,7 +298,7 @@ async def test_ollama_chat_wire_format(monkeypatch: pytest.MonkeyPatch) -> None:
         "tools": [{"type": "function"}],
         "stream": False,
         "think": False,
-        "options": {"temperature": 0},
+        "options": {"temperature": 0, "num_predict": 2048, "num_ctx": 32768},
     }
 
 

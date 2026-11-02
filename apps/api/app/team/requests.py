@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import service as audit
 from app.errors import ProblemError, not_found, validation_error
+from app.formatting import month_day
 from app.identity.models import Location
 from app.team import me, notify, schedule
 from app.team.models import (
@@ -91,8 +92,8 @@ def _hhmm(t: time | None) -> str:
 
 def _days(req: TimeOffRequest) -> str:
     if req.starts_on == req.ends_on:
-        return req.starts_on.strftime("%a %b %-d")
-    return f"{req.starts_on.strftime('%b %-d')}-{req.ends_on.strftime('%b %-d')}"
+        return month_day(req.starts_on, weekday=True)
+    return f"{month_day(req.starts_on)}-{month_day(req.ends_on)}"
 
 
 # ---------------------------------------------------------------- builder conflicts
@@ -334,7 +335,7 @@ async def submit_availability(
         await notify.managers_for(db, org_id, await employee_location_ids_one(db, emp.id)),
         kind="availability_submitted",
         title=f"{emp.display_name} updated their availability",
-        body=f"Starting {data.effective_from.strftime('%a %b %-d')}. Review it in Requests.",
+        body=f"Starting {month_day(data.effective_from, weekday=True)}. Review it in Requests.",
         link="/app/team/requests",
         entity_type="availability",
         entity_id=row.id,
@@ -606,7 +607,7 @@ async def decide_availability(
             [emp.user_id],
             kind="availability_decided",
             title=f"Your availability was {row.status}",
-            body=row.decision_note or f"Effective {row.effective_from.strftime('%a %b %-d')}.",
+            body=row.decision_note or f"Effective {month_day(row.effective_from, weekday=True)}.",
             link="/my/requests",
             entity_type="availability",
             entity_id=row.id,

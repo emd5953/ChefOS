@@ -31,6 +31,8 @@ TEAM_RLS_TABLES = {
     "schedules", "shifts", "published_shifts", "notifications", "availability_sets",
     "availability_blocks", "time_off_requests",
 }  # fmt: skip
+# Private conversation behavior is covered in tests/sous/test_conversations.py.
+SOUS_RLS_TABLES = {"sous_conversations", "sous_turns"}
 # Tables with an org_id column that are intentionally NOT under RLS (accessed only by auth code
 # before org scope exists). Adding to this set requires a reason.
 NO_RLS_ALLOWED = {"sessions"}
@@ -218,3 +220,6 @@ async def test_every_org_scoped_table_has_rls(owner_engine: AsyncEngine) -> None
     assert tables >= TEAM_RLS_TABLES
     assert policies >= TEAM_RLS_TABLES
     assert all(rls[t] for t in TEAM_RLS_TABLES)
+    assert tables >= SOUS_RLS_TABLES
+    assert policies >= SOUS_RLS_TABLES
+    assert all(rls[t] for t in SOUS_RLS_TABLES)
