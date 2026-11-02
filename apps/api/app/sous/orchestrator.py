@@ -8,7 +8,7 @@ import asyncio
 import json
 import re
 import time
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, aclosing, suppress
 from datetime import UTC, date, datetime
 from typing import Any
@@ -48,6 +48,7 @@ REQUEST_TIMEOUT_SECONDS = 120.0
 TOOL_TIMEOUT_SECONDS = 10.0
 
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
+AuthorizationCheck = Callable[[], Awaitable[None]]
 
 _tracer = trace.get_tracer("chefos.sous")
 _THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
@@ -198,12 +199,15 @@ async def _call_tool(
     now: datetime,
     model: str,
     parent: Context,
+    authorize: AuthorizationCheck | None = None,
 ) -> tuple[ToolResult, ToolEvent]:
     with _tracer.start_as_current_span("sous.tool", context=parent) as span:
         t0 = time.perf_counter()
         # Recheck the caller's location scope on every call; the tool refuses before querying.
         try:
             async with asyncio.timeout(TOOL_TIMEOUT_SECONDS):
+                if authorize is not None:
+                    await authorize()
                 allowed = await ctx.allowed_location_ids()
                 # A session per tool call: no connection is held while the model is thinking.
                 async with open_session() as db:
@@ -254,6 +258,7 @@ async def events(
     *,
     open_session: SessionFactory | None = None,
     history: list[HistoryTurn] | None = None,
+    authorize: AuthorizationCheck | None = None,
 ) -> AsyncGenerator[SousEvent]:
     """Progress events for one question, ending with the SousAnswer (or raising ProblemError)."""
     now = now or datetime.now(UTC)
@@ -267,7 +272,17 @@ async def events(
         # Keep timeout scopes out of generator yields: cancellation belongs to the active
         # operation, never to the SSE consumer while it is sending a heartbeat.
         async with aclosing(
-            _run(ctx, loc, req, provider, now, sessions, set_span_in_context(span), history or [])
+            _run(
+                ctx,
+                loc,
+                req,
+                provider,
+                now,
+                sessions,
+                set_span_in_context(span),
+                history or [],
+                authorize,
+            )
         ) as stream:
             while True:
                 try:
@@ -306,10 +321,20 @@ async def ask(
     *,
     open_session: SessionFactory | None = None,
     history: list[HistoryTurn] | None = None,
+    authorize: AuthorizationCheck | None = None,
 ) -> SousAnswer:
     """The non-streaming form: drain events() and return the answer."""
     async with aclosing(
-        events(ctx, loc, req, provider, now, open_session=open_session, history=history)
+        events(
+            ctx,
+            loc,
+            req,
+            provider,
+            now,
+            open_session=open_session,
+            history=history,
+            authorize=authorize,
+        )
     ) as stream:
         async for event in stream:
             if isinstance(event, SousAnswer):
@@ -326,10 +351,11 @@ async def _run(
     sessions: SessionFactory,
     parent: Context,
     history: list[HistoryTurn],
+    authorize: AuthorizationCheck | None,
 ) -> AsyncGenerator[SousEvent]:
     try:
         async with aclosing(
-            _model_run(ctx, loc, req, provider, now, sessions, parent, history)
+            _model_run(ctx, loc, req, provider, now, sessions, parent, history, authorize)
         ) as stream:
             async for event in stream:
                 yield event
@@ -342,7 +368,7 @@ async def _run(
             raise
         yield StatusEvent(label="The assistant model isn't responding, so using a quick answer")
         result, event = await _call_tool(
-            plan.tool, plan.args, sessions, ctx, loc, now, "fallback", parent
+            plan.tool, plan.args, sessions, ctx, loc, now, "fallback", parent, authorize
         )
         yield event
         if not result.ok:
@@ -370,6 +396,7 @@ async def _model_run(
     sessions: SessionFactory,
     parent: Context,
     history: list[HistoryTurn],
+    authorize: AuthorizationCheck | None,
 ) -> AsyncGenerator[SousEvent]:
     messages: list[Message] = [
         {"role": "system", "content": prompt.build_system_prompt(loc, now)},
@@ -436,7 +463,15 @@ async def _model_run(
                     messages.append(_tool_message(call.name, limit))
                     continue
                 result, event = await _call_tool(
-                    call.name, call.arguments, sessions, ctx, loc, now, provider.model, parent
+                    call.name,
+                    call.arguments,
+                    sessions,
+                    ctx,
+                    loc,
+                    now,
+                    provider.model,
+                    parent,
+                    authorize,
                 )
                 results.append(result)
                 used.append(ToolUse(**event.model_dump(exclude={"label"})))

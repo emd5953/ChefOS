@@ -49,7 +49,7 @@ function describeError(e: unknown): ErrorInfo {
   if (isApiError(e)) {
     if (e.code === "sous_turn_running")
       return { text: "The previous question is still finishing. Retry shortly.", unavailable: false, retry: true };
-    if (["sous_turn_stale", "sous_conversation_full", "sous_turn_conflict"].includes(e.code))
+    if (["sous_turn_stale", "sous_conversation_full", "sous_turn_conflict", "sous_conversation_expired"].includes(e.code))
       return { text: e.detail ?? "Clear this conversation to start again.", unavailable: false, retry: false };
     if (e.status === 429 || e.code === "rate_limited")
       return { text: "You’re asking quickly — try again in a minute.", unavailable: false, retry: true };

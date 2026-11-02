@@ -102,9 +102,17 @@ async def _authorized_events(
             await _location(current, body.location_id)
             yield reservation.replay
             return
+
+        async def authorize_current() -> None:
+            current = await require_auth(request)
+            require_role(current, STAFF_ROLES)
+            await _location(current, body.location_id)
+
         # Reauthorize before another model round and before committing/releasing the answer.
         async with aclosing(
-            orchestrator.events(ctx, loc, body, provider, history=reservation.history)
+            orchestrator.events(
+                ctx, loc, body, provider, history=reservation.history, authorize=authorize_current
+            )
         ) as events:
             async for event in events:
                 if isinstance(event, ToolEvent | SousAnswer):

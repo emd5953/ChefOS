@@ -269,10 +269,21 @@ async def test_access_revoked_while_model_runs_is_not_released(
     bare: Connected,
     owner_engine: AsyncEngine,
     use_provider: UseProvider,
+    monkeypatch: pytest.MonkeyPatch,
     streaming: bool,
     change: str,
     stage: str,
 ) -> None:
+    ran_tools = 0
+    original_run_tool = tools.run_tool
+
+    async def count_tool(*args: Any, **kwargs: Any) -> Any:
+        nonlocal ran_tools
+        ran_tools += 1
+        return await original_run_tool(*args, **kwargs)
+
+    monkeypatch.setattr(tools, "run_tool", count_tool)
+
     class RevokingProvider(FakeProvider):
         async def chat(self, messages: Any, specs: Any) -> LLMReply:
             if stage == "answer" and not self.calls:
@@ -314,3 +325,4 @@ async def test_access_revoked_while_model_runs_is_not_released(
         response = await post(bare, body(bare))
         assert response.status_code == expected, response.text
     assert len(provider.calls) == (1 if stage == "tool" else 2)
+    assert ran_tools == (0 if stage == "tool" else 1)
