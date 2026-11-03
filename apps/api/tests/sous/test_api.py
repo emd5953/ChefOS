@@ -47,6 +47,7 @@ async def test_ask_returns_the_sous_answer_shape(
     assert set(out) == {
         "kind", "answer", "period", "evidence", "limitations", "tools_used", "model",
         "prompt_version", "request_id", "mode", "conversation_id", "turn_id", "conversation_version",
+        "proposals",
     }  # fmt: skip
     assert out["mode"] == "model"
     assert out["kind"] == "clarify" and "date range" in out["answer"]

@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 from app.identity.models import Location
 from app.integrations.providers.square.business_date import business_date, get_zone
 
-PROMPT_VERSION = "sous-prompt-11"
+PROMPT_VERSION = "sous-prompt-12"
 
 CLARIFY = "CLARIFY:"
 REFUSE = "REFUSE:"
@@ -102,9 +102,15 @@ order. Say so when a tool reports days without timecards or dates without a publ
 with no time frame), do not guess and do not call tools. Choose kind "clarify" with reason \
 "period". Labor and schedule questions need a period too. Stock and par \
 questions are about now and need no period.
-5. If the question is outside what the tools cover (waste, food cost, recipes, placing \
-purchase orders, payroll, pay rates, editing schedules, other locations, forecasts, general \
-knowledge), choose kind "unsupported".
+5. If the manager explicitly asks to add or open one schedule shift, use \
+prepare_schedule_change only when the Monday week_start, position_id, and start/end timestamps \
+with timezone offsets are clear. employee_id is optional; it may be null for an open shift. If \
+any required detail or ID is missing or ambiguous, clarify instead of guessing. This creates a \
+pending proposal only. Never claim the schedule changed; a manager must approve it, and normal \
+schedule publishing is still required. Do not propose edits or removals. If the question is \
+outside the tools (waste, food cost, recipes, purchase orders, payroll, pay rates, \
+other locations, \
+forecasts, general knowledge), choose kind "unsupported".
 5b. Your data covers only "{loc.name}". Only when the question explicitly names a different \
 location, branch, neighborhood or restaurant, choose kind "unsupported". Never present this \
 location's numbers as another location's. Questions that name no place are about this location.

@@ -37,6 +37,7 @@ METRICS = {
     "below_par_count": "Items below par",
     "items_without_par": "Items without a par level",
     "unmapped_net_sales_usd": "Unmapped item net sales",
+    "proposals_created": "Schedule proposals created",
 }
 CONTROLLED = {
     "period": "Which day or date range do you mean?",
@@ -45,7 +46,7 @@ CONTROLLED = {
     "question": "What would you like to check, and for which day or date range?",
     "refuse": "I can help with restaurant operations using the available read-only tools.",
     "unsupported": "I can check sales, labor, published schedules, inventory below par, and data "
-    "freshness for this location. I cannot make changes or perform actions.",
+    "freshness for this location. I can also prepare one new schedule shift for manager approval.",
 }
 
 
@@ -121,6 +122,8 @@ def catalog(result: ToolResult, index: int) -> dict[str, str]:
     span = f"{result.period[0]} to {result.period[1]}" if result.period else "current inventory"
     if result.tool == "get_today":
         span += " so far"
+    elif result.tool == "prepare_schedule_change":
+        span = "schedule proposal"
 
     def add(key: str, sentence: str) -> None:
         facts[f"r{index}.{key}"] = sentence

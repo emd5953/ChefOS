@@ -67,3 +67,26 @@ class Turn(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )
+
+
+class ScheduleProposal(Base):
+    """A 24 hour, manager reviewed proposal; payload is validated again on approval."""
+
+    __tablename__ = "sous_schedule_proposals"
+    __table_args__ = (
+        Index("ix_sous_schedule_proposals_inbox", "org_id", "location_id", "status", "created_at"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=new_id)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
+    location_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("locations.id"))
+    schedule_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("schedules.id", ondelete="CASCADE"))
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    expected_version: Mapped[int]
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String, default="pending", server_default="pending")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), default=None)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )

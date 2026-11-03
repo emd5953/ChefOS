@@ -4,6 +4,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from app.team.schemas import ShiftIn
+
 Kind = Literal["answer", "clarify", "refuse", "unsupported", "evidence_only"]
 Mode = Literal["model", "fallback"]
 BreakerState = Literal["closed", "open", "half_open"]
@@ -48,6 +50,20 @@ class ToolUse(BaseModel):
     ok: bool
 
 
+class ScheduleProposalOut(BaseModel):
+    id: uuid.UUID
+    location_id: uuid.UUID
+    schedule_id: uuid.UUID
+    week_start: date
+    expected_version: int
+    payload: dict[str, Any]
+    position_name: str
+    employee_name: str | None
+    status: str
+    expires_at: datetime
+    created_at: datetime
+
+
 class SousAnswer(BaseModel):
     conversation_id: uuid.UUID | None = None
     turn_id: uuid.UUID | None = None
@@ -62,6 +78,21 @@ class SousAnswer(BaseModel):
     prompt_version: str
     request_id: str
     mode: Mode = "model"
+    proposals: list[ScheduleProposalOut] = Field(default_factory=list)
+
+
+class ScheduleProposalIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    location_id: uuid.UUID
+    week_start: date
+    shift: ShiftIn
+
+
+class ScheduleProposalDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    approve: bool
 
 
 class StatusOut(BaseModel):

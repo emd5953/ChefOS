@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -27,6 +27,8 @@ from app.formatting import local_timestamp
 from app.identity.models import Location
 from app.integrations.freshness import FreshnessItem, location_freshness
 from app.integrations.providers.square.business_date import business_date, get_zone
+from app.security.sessions import AuthContext
+from app.sous import proposals as proposal_service
 from app.sous.schemas import (
     Evidence,
     FactsPeriod,
@@ -41,6 +43,7 @@ from app.sous.schemas import (
 )
 from app.team.models import Position, PublishedShift, Schedule, Shift, StaffMember, Station
 from app.team.schedule import count_changes, label_time, paid_hours
+from app.team.schemas import ShiftIn
 
 log = structlog.get_logger()
 
@@ -114,6 +117,13 @@ class BelowParArgs(BaseModel):
     limit: int = Field(
         default=25, ge=1, le=MAX_PAR_ITEMS, description="How many items to list, 1 to 50"
     )
+
+
+class PrepareScheduleChangeArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    week_start: date = Field(description="Monday date (YYYY-MM-DD) for the target schedule week")
+    shift: ShiftIn
 
 
 # --- helpers ---------------------------------------------------------------------------------
@@ -933,6 +943,15 @@ TOOLS: dict[str, ToolDef] = {
             _schedule,
         ),
         ToolDef(
+            "prepare_schedule_change",
+            "Prepare one new draft shift for manager review. This does not apply or publish a "
+            "schedule change. You need the location's Monday week_start, position_id, optional "
+            "employee_id, and ISO start/end timestamps with timezone offsets. Ask a clarifying "
+            "ID or time is unknown.",
+            PrepareScheduleChangeArgs,
+            _schedule,
+        ),
+        ToolDef(
             "find_items_below_par",
             "Inventory items whose stock on hand is below their par level at this location, most "
             "depleted first, with quantities in base units (g, ml or ea), plus items with no par.",
@@ -992,6 +1011,7 @@ async def run_tool(
     now: datetime,
     *,
     allowed: Collection[uuid.UUID] | None = None,
+    caller: AuthContext | None = None,
 ) -> ToolResult:
     """Validate and run one tool. Never raises: failures come back as `ok=False` results.
 
@@ -1011,7 +1031,48 @@ async def run_tool(
     try:
         # A savepoint, so a failed query doesn't poison the request's transaction.
         async with db.begin_nested():
-            result = await tool.run(db, org_id, loc, parsed, today, now)
+            if name == "prepare_schedule_change":
+                if caller is None:
+                    return _failed(name, "Schedule proposals are unavailable in this context.")
+                if caller.role not in {"owner", "admin", "manager"}:
+                    return _failed(name, "Only managers can prepare schedule proposals.")
+                proposal_args = cast(PrepareScheduleChangeArgs, parsed)
+                proposal = await proposal_service.create(
+                    db, caller, loc.id, proposal_args.week_start, proposal_args.shift
+                )
+                week_start = proposal_args.week_start
+                position = await db.get(Position, proposal_args.shift.position_id)
+                employee = (
+                    await db.get(StaffMember, proposal_args.shift.employee_id)
+                    if proposal_args.shift.employee_id
+                    else None
+                )
+                position_name, position_hidden = (
+                    _text(position.name) if position else ("Position", False)
+                )
+                employee_name, employee_hidden = (
+                    _text(employee.display_name) if employee else (None, False)
+                )
+                result = ToolResult(
+                    data={
+                        "proposals_created": 1,
+                        "id": str(proposal.id),
+                        "location_id": str(proposal.location_id),
+                        "schedule_id": str(proposal.schedule_id),
+                        "week_start": week_start.isoformat(),
+                        "expected_version": proposal.expected_version,
+                        "status": proposal.status,
+                        "expires_at": proposal.expires_at.isoformat(),
+                        "created_at": proposal.created_at.isoformat(),
+                        "payload": proposal.payload,
+                        "position_name": position_name,
+                        "employee_name": employee_name,
+                    },
+                    hidden_names=position_hidden + employee_hidden,
+                    tool=name,
+                )
+            else:
+                result = await tool.run(db, org_id, loc, parsed, today, now)
     except ToolArgError as exc:
         return _failed(name, str(exc))
     except Exception as exc:

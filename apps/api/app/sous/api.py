@@ -13,6 +13,7 @@ import anyio
 import structlog
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.types import Send
 
 from app.commerce import service
@@ -20,16 +21,27 @@ from app.db import scoped_session
 from app.errors import ProblemError
 from app.identity.models import Location
 from app.integrations.providers.square.business_date import business_date
-from app.security.sessions import STAFF_ROLES, AuthContext, StaffDep, require_auth, require_role
-from app.sous import conversations, fallback, orchestrator, prompt
+from app.security.sessions import (
+    STAFF_ROLES,
+    AuthContext,
+    OrgSession,
+    StaffDep,
+    require_auth,
+    require_role,
+)
+from app.sous import conversations, fallback, orchestrator, prompt, proposals
 from app.sous import service as briefings
 from app.sous.llm import LLMProvider, get_provider, sous_unavailable
+from app.sous.models import ScheduleProposal
 from app.sous.schemas import (
     AskIn,
     BriefingOut,
     ConversationEvent,
     ErrorEvent,
     Heartbeat,
+    ScheduleProposalDecision,
+    ScheduleProposalIn,
+    ScheduleProposalOut,
     SousAnswer,
     SousEvent,
     StatusEvent,
@@ -40,6 +52,58 @@ from app.sous.schemas import (
 log = structlog.get_logger()
 
 router = APIRouter(prefix="/v1/sous", tags=["sous"])
+
+
+async def _proposal_out(db: AsyncSession, row: ScheduleProposal) -> ScheduleProposalOut:
+    from app.team.models import Position, Schedule, StaffMember
+
+    # week_start is part of the persisted schedule; callers don't choose it at approval time.
+    schedule = await db.get(Schedule, row.schedule_id)
+    position = await db.get(Position, uuid.UUID(row.payload["position_id"]))
+    employee = (
+        await db.get(StaffMember, uuid.UUID(row.payload["employee_id"]))
+        if row.payload.get("employee_id")
+        else None
+    )
+    return ScheduleProposalOut(
+        id=row.id,
+        location_id=row.location_id,
+        schedule_id=row.schedule_id,
+        week_start=schedule.week_start if schedule else date.min,
+        expected_version=row.expected_version,
+        payload=row.payload,
+        position_name=position.name if position else "Position",
+        employee_name=employee.display_name if employee else None,
+        status=row.status,
+        expires_at=row.expires_at,
+        created_at=row.created_at,
+    )
+
+
+@router.post("/proposals", status_code=201, response_model=ScheduleProposalOut)
+async def create_proposal(
+    body: ScheduleProposalIn, ctx: StaffDep, db: OrgSession
+) -> ScheduleProposalOut:
+    row = await proposals.create(db, ctx, body.location_id, body.week_start, body.shift)
+    return await _proposal_out(db, row)
+
+
+@router.get("/proposals", response_model=list[ScheduleProposalOut])
+async def list_proposals(ctx: StaffDep, db: OrgSession) -> list[ScheduleProposalOut]:
+    rows = await proposals.list_pending(db, ctx)
+    out = []
+    for row in rows:
+        out.append(await _proposal_out(db, row))
+    return out
+
+
+@router.post("/proposals/{proposal_id}/decision", response_model=ScheduleProposalOut)
+async def decide_proposal(
+    proposal_id: uuid.UUID, body: ScheduleProposalDecision, ctx: StaffDep, db: OrgSession
+) -> ScheduleProposalOut:
+    row = await proposals.decide(db, ctx, proposal_id, body.approve)
+    return await _proposal_out(db, row)
+
 
 RATE_LIMIT = 20  # questions per user per window
 RATE_WINDOW_SECONDS = 60.0

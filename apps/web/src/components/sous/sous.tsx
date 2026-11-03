@@ -14,6 +14,7 @@ import { useSousStatus } from "@/lib/queries";
 import { streamSse } from "@/lib/sse";
 import type {
   SousAnswer,
+  SousScheduleProposal,
   SousAskInput,
   SousErrorEvent,
   SousStatusEvent,
@@ -122,6 +123,46 @@ function parseEvent<T>(data: string): T | null {
   }
 }
 
+function ProposalCard({ proposal }: { proposal: SousScheduleProposal }) {
+  const [state, setState] = useState(proposal.status);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const decide = async (approve: boolean) => {
+    setBusy(true);
+    setError("");
+    try {
+      const updated = await api<SousScheduleProposal>(`/v1/sous/proposals/${proposal.id}/decision`, {
+        method: "POST",
+        body: { approve },
+      });
+      setState(updated.status);
+    } catch {
+      setError("Could not record that decision. Refresh and try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const start = new Date(proposal.payload.starts_at);
+  const end = new Date(proposal.payload.ends_at);
+  return (
+    <section className="rounded-xl border border-accent/25 bg-accent/5 p-3.5" aria-label="Schedule proposal">
+      <p className="text-[12px] font-semibold">Schedule proposal · {proposal.week_start}</p>
+      <p className="mt-1 text-[12px] text-foreground/65">
+        {start.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+        {" – "}{end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+        {" · "}{proposal.position_name}{proposal.employee_name ? ` · ${proposal.employee_name}` : " · Open shift"}
+      </p>
+      {state === "pending" ? (
+        <div className="mt-3 flex gap-2">
+          <Button size="sm" disabled={busy} onClick={() => void decide(true)}>Approve</Button>
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => void decide(false)}>Decline</Button>
+        </div>
+      ) : <p className="mt-2 text-[11px] capitalize text-foreground/55">{state}</p>}
+      {error && <p className="mt-2 text-[11px] text-destructive" role="alert">{error}</p>}
+    </section>
+  );
+}
+
 function Chat({ locationId }: { locationId: string }) {
   const status = useSousStatus();
   const { csrfToken } = useAuth();
@@ -131,6 +172,7 @@ function Chat({ locationId }: { locationId: string }) {
   const [announce, setAnnounce] = useState("");
   const [clearing, setClearing] = useState(false);
   const [clearError, setClearError] = useState("");
+  const [proposalInbox, setProposalInbox] = useState<SousScheduleProposal[]>([]);
   const conversationRef = useRef<string | undefined>(undefined);
   const nextId = useRef(1);
   const endRef = useRef<HTMLDivElement>(null);
@@ -147,6 +189,14 @@ function Chat({ locationId }: { locationId: string }) {
 
   // Unmount (including a location change, which re-keys Chat) aborts the in-flight stream.
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  useEffect(() => {
+    let active = true;
+    void api<SousScheduleProposal[]>("/v1/sous/proposals")
+      .then((items) => { if (active) setProposalInbox(items); })
+      .catch(() => { /* proposal inbox is supplementary to the assistant conversation */ });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "end" });
@@ -193,6 +243,13 @@ function Chat({ locationId }: { locationId: string }) {
             const answer = parseEvent<SousAnswer>(data);
             if (!answer) return fail(new Error("Malformed answer"));
             conversationRef.current = answer.conversation_id;
+            if (answer.proposals?.length) {
+              setProposalInbox((prior) => {
+                const merged = new Map(prior.map((p) => [p.id, p]));
+                for (const proposal of answer.proposals) merged.set(proposal.id, proposal);
+                return [...merged.values()];
+              });
+            }
             setMessages((ms) => ms.map((m) => (m.id === id ? { id, role: "assistant", state: "done", answer } : m)));
             setAnnounce(answer.answer);
           } else if (event === "error") {
@@ -336,6 +393,12 @@ function Chat({ locationId }: { locationId: string }) {
                 </li>
               ))}
             </ol>
+          )}
+          {proposalInbox.length > 0 && (
+            <section className="space-y-2" aria-label="Pending schedule proposals">
+              <p className="eyebrow text-[10px]">Pending schedule proposals</p>
+              {proposalInbox.map((proposal) => <ProposalCard key={proposal.id} proposal={proposal} />)}
+            </section>
           )}
           <div ref={endRef} />
         </div>

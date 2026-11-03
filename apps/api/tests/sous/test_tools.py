@@ -38,6 +38,7 @@ def test_registry_has_the_v1_and_team_inventory_tools() -> None:
         "get_data_freshness",
         "get_labor_summary",
         "get_schedule",
+        "prepare_schedule_change",
         "find_items_below_par",
     )
 

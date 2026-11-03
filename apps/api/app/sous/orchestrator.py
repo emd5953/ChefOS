@@ -212,7 +212,7 @@ async def _call_tool(
                 # A session per tool call: no connection is held while the model is thinking.
                 async with open_session() as db:
                     result = await tools.run_tool(
-                        name, args, db, ctx.org_id, loc, now, allowed=allowed
+                        name, args, db, ctx.org_id, loc, now, allowed=allowed, caller=ctx
                     )
         except TimeoutError:
             result = ToolResult(tool=name, ok=False, data={"error": "The tool timed out."})
@@ -419,6 +419,7 @@ async def _model_run(
     used: list[ToolUse] = []
     results: list[ToolResult] = []
     facts: dict[str, str] = {}
+    proposals_out: list[Any] = []
     retried = False
 
     def finish(kind: Kind, text: str) -> SousAnswer:
@@ -433,6 +434,7 @@ async def _model_run(
             model=provider.model,
             prompt_version=prompt.PROMPT_VERSION,
             request_id=request_id_var.get(),
+            proposals=proposals_out,
         )
 
     yield StatusEvent(label="Thinking")
@@ -474,11 +476,36 @@ async def _model_run(
                     authorize,
                 )
                 results.append(result)
+                if result.ok and call.name == "prepare_schedule_change":
+                    proposals_out.append(
+                        {
+                            "id": result.data["id"],
+                            "location_id": result.data["location_id"],
+                            "schedule_id": result.data["schedule_id"],
+                            "week_start": result.data["week_start"],
+                            "expected_version": result.data["expected_version"],
+                            "payload": result.data["payload"],
+                            "position_name": result.data["position_name"],
+                            "employee_name": result.data["employee_name"],
+                            "status": result.data["status"],
+                            "expires_at": result.data["expires_at"],
+                            "created_at": result.data["created_at"],
+                        }
+                    )
                 used.append(ToolUse(**event.model_dump(exclude={"label"})))
                 new_facts = claims.catalog(result, len(results) - 1)
                 facts.update(new_facts)
                 messages.append(
-                    _tool_message(call.name, {"facts": new_facts} if result.ok else result.data)
+                    _tool_message(
+                        call.name,
+                        (
+                            {"facts": new_facts, "proposal": result.data}
+                            if call.name == "prepare_schedule_change"
+                            else {"facts": new_facts}
+                        )
+                        if result.ok
+                        else result.data,
+                    )
                 )
                 yield event
             yield StatusEvent(label="Reading the results")

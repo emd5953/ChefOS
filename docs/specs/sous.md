@@ -1,6 +1,6 @@
 # Sous: Operations Assistant
 
-**Status:** In progress (milestones 1–4, Team/Inventory reads) · **Owner:** TBD · **Last updated:** 2026-10-21
+**Status:** Built: grounded read tools plus manager-reviewed new-shift proposal path · **Owner:** TBD · **Last updated:** 2026-11-02
 **Related:** [ADR 0003: Read-only first](../adr/0003-sous-read-only-first.md), [Integration layer](integration-layer.md), [Architecture](../architecture.md)
 
 ## Problem
@@ -12,11 +12,11 @@ Managers have operating questions that cut across modules: "Why was labor high T
 - Answer operations questions from authorized, current, traceable data.
 - Return evidence with every answer: values, units, time window, source references, and data freshness.
 - Keep authorization, calculations, and writes in deterministic service code. The model interprets intent and explains results. It doesn't decide scope, compute metrics, or touch the database.
-- Later, propose changes as drafts that a person approves ([ADR 0003](../adr/0003-sous-read-only-first.md)).
+- Propose a single new schedule shift as a version-checked draft that a manager approves; the normal Team publish flow still controls when employees see it ([ADR 0003](../adr/0003-sous-read-only-first.md)).
 
 ## Non-goals (v1)
 
-- Writes of any kind (draft-and-approve comes in a later milestone).
+- Direct schedule edits/removals and any action that bypasses manager approval and normal publishing.
 - General-purpose SQL, code execution, or open web access for the model.
 - Vector search or multi-agent orchestration without a measured need.
 - Payroll, payments, or HR actions.
@@ -314,7 +314,7 @@ The `*Facts` models live in `app/sous/schemas.py`. Since prompt 8, the orchestra
 
 ### Prompt (`sous-prompt-6`)
 
-Adds labor-hours, scheduled-hours and below-par definitions, tool-choice guidance, and future date references (tomorrow, this week Monday to Sunday, next week) marked schedule-only. Schedules and inventory are no longer listed as unsupported. Editing schedules, placing purchase orders, waste and pay rates still are. Stock and par questions need no period.
+Adds labor-hours, scheduled-hours and below-par definitions, tool-choice guidance, and future date references (tomorrow, this week Monday to Sunday, next week) marked schedule-only. Schedules and inventory are no longer listed as unsupported. Editing or removing shifts, placing purchase orders, waste and pay rates remain unsupported. Stock and par questions need no period.
 
 `sous-prompt-7` (F2) extends rule 4: labor and schedule questions without a period (hours worked, labor cost, labor %, scheduled hours) clarify, as sales ones do.
 
