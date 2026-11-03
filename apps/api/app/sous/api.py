@@ -59,10 +59,15 @@ async def _proposal_out(db: AsyncSession, row: ScheduleProposal) -> ScheduleProp
 
     # week_start is part of the persisted schedule; callers don't choose it at approval time.
     schedule = await db.get(Schedule, row.schedule_id)
-    position = await db.get(Position, uuid.UUID(row.payload["position_id"]))
+    summary = row.payload or row.before_snapshot or {}
+    position = (
+        await db.get(Position, uuid.UUID(summary["position_id"]))
+        if summary.get("position_id")
+        else None
+    )
     employee = (
-        await db.get(StaffMember, uuid.UUID(row.payload["employee_id"]))
-        if row.payload.get("employee_id")
+        await db.get(StaffMember, uuid.UUID(summary["employee_id"]))
+        if summary.get("employee_id")
         else None
     )
     return ScheduleProposalOut(
@@ -71,7 +76,10 @@ async def _proposal_out(db: AsyncSession, row: ScheduleProposal) -> ScheduleProp
         schedule_id=row.schedule_id,
         week_start=schedule.week_start if schedule else date.min,
         expected_version=row.expected_version,
+        action=row.action,
+        target_shift_id=row.target_shift_id,
         payload=row.payload,
+        before_snapshot=row.before_snapshot,
         position_name=position.name if position else "Position",
         employee_name=employee.display_name if employee else None,
         status=row.status,
@@ -84,7 +92,15 @@ async def _proposal_out(db: AsyncSession, row: ScheduleProposal) -> ScheduleProp
 async def create_proposal(
     body: ScheduleProposalIn, ctx: StaffDep, db: OrgSession
 ) -> ScheduleProposalOut:
-    row = await proposals.create(db, ctx, body.location_id, body.week_start, body.shift)
+    row = await proposals.create(
+        db,
+        ctx,
+        body.location_id,
+        action=body.action,
+        week_start=body.week_start,
+        target_shift_id=body.target_shift_id,
+        shift=body.shift,
+    )
     return await _proposal_out(db, row)
 
 

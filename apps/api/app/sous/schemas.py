@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from app.team.schemas import ShiftIn
 
@@ -56,7 +56,10 @@ class ScheduleProposalOut(BaseModel):
     schedule_id: uuid.UUID
     week_start: date
     expected_version: int
-    payload: dict[str, Any]
+    action: Literal["add", "update", "remove"]
+    target_shift_id: uuid.UUID | None
+    payload: dict[str, Any] | None
+    before_snapshot: dict[str, Any] | None
     position_name: str
     employee_name: str | None
     status: str
@@ -85,8 +88,24 @@ class ScheduleProposalIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     location_id: uuid.UUID
-    week_start: date
-    shift: ShiftIn
+    action: Literal["add", "update", "remove"] = "add"
+    week_start: date | None = None
+    target_shift_id: uuid.UUID | None = None
+    shift: ShiftIn | None = None
+
+    @model_validator(mode="after")
+    def _action_args(self) -> ScheduleProposalIn:
+        if self.action == "add" and (
+            self.week_start is None or self.shift is None or self.target_shift_id
+        ):
+            raise ValueError(
+                "Adding a shift requires week_start and shift, with no target_shift_id"
+            )
+        if self.action == "update" and (self.target_shift_id is None or self.shift is None):
+            raise ValueError("Updating a shift requires target_shift_id and shift")
+        if self.action == "remove" and (self.target_shift_id is None or self.shift is not None):
+            raise ValueError("Removing a shift requires target_shift_id and no shift payload")
+        return self
 
 
 class ScheduleProposalDecision(BaseModel):

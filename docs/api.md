@@ -509,14 +509,17 @@ terminal answer or error. The answer is committed before delivery.
 returning 204. Session, staff role, CSRF, ownership and current location access are required.
 Clearing fences any still-running answer; unknown or inaccessible IDs return 404.
 
-Sous can prepare a single new shift proposal with `prepare_schedule_change`. It creates a
-24-hour, version-checked draft only; publishing and changing the employee-visible schedule
-still require the normal Team schedule publish flow. The answer includes any proposal card.
-Managers can use `GET /v1/sous/proposals` to list pending proposals and
+Sous can prepare one shift addition, adjustment, or removal with `prepare_schedule_change`.
+Each proposal is a 24-hour, version-checked draft; it changes only the unpublished schedule.
+Publishing and changing the employee-visible schedule still require the normal Team schedule
+publish flow. Adjustments and removals must target a shift in the published schedule and match
+its current snapshot. Managers can use `GET /v1/sous/proposals` to list pending proposals and
 `POST /v1/sous/proposals/{id}/decision` with `{ approve: boolean }` to approve or decline.
-Approval revalidates the schedule version and shift payload under lock. A changed schedule
+Approval revalidates the schedule version and target snapshot under lock. A changed schedule
 returns a `stale` proposal without writing a shift. `POST /v1/sous/proposals` accepts the same
-structured proposal directly for manager clients.
+structured proposal directly for manager clients: `action` is `add`, `update`, or `remove`;
+`add` requires `week_start` and a complete `shift`, while `update` requires `target_shift_id`
+and a complete replacement `shift`, and `remove` requires only `target_shift_id`.
 
 - `kind` is `clarify` when the question needs a period or other detail, `refuse` when asked to leave its role, `unsupported` for anything outside the tools (direct schedule edits/removals, placing orders, waste, payroll), and `evidence_only` when a fact selection is invalid after one repair, or the request exceeds the context budget (`answer` is deterministic and `evidence` carries any collected figures). Only `answer` and `evidence_only` include `period`, `evidence` and `limitations`.
 - Evidence money is integer cents (`usd_cents`); percents are in percent units.

@@ -142,14 +142,22 @@ function ProposalCard({ proposal }: { proposal: SousScheduleProposal }) {
       setBusy(false);
     }
   };
-  const start = new Date(proposal.payload.starts_at);
-  const end = new Date(proposal.payload.ends_at);
+  const detail = proposal.payload ?? proposal.before_snapshot;
+  const start = detail ? new Date(detail.starts_at) : null;
+  const end = detail ? new Date(detail.ends_at) : null;
+  const timeRange = start && end
+    ? `${start.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} – ${end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+    : "Shift details unavailable";
+  const actionLabel = proposal.action === "add" ? "Add shift" : proposal.action === "update" ? "Change shift" : "Remove shift";
+  const beforeTime = proposal.before_snapshot
+    ? `${new Date(proposal.before_snapshot.starts_at).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} – ${new Date(proposal.before_snapshot.ends_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+    : null;
   return (
     <section className="rounded-xl border border-accent/25 bg-accent/5 p-3.5" aria-label="Schedule proposal">
-      <p className="text-[12px] font-semibold">Schedule proposal · {proposal.week_start}</p>
+      <p className="text-[12px] font-semibold">{actionLabel} · {proposal.week_start}</p>
       <p className="mt-1 text-[12px] text-foreground/65">
-        {start.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
-        {" – "}{end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+        {proposal.action === "update" && beforeTime ? <>{beforeTime}{" → "}</> : null}
+        {proposal.action === "remove" ? beforeTime : timeRange}
         {" · "}{proposal.position_name}{proposal.employee_name ? ` · ${proposal.employee_name}` : " · Open shift"}
       </p>
       {state === "pending" ? (

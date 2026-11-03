@@ -484,7 +484,10 @@ async def _model_run(
                             "schedule_id": result.data["schedule_id"],
                             "week_start": result.data["week_start"],
                             "expected_version": result.data["expected_version"],
+                            "action": result.data["action"],
+                            "target_shift_id": result.data["target_shift_id"],
                             "payload": result.data["payload"],
+                            "before_snapshot": result.data["before_snapshot"],
                             "position_name": result.data["position_name"],
                             "employee_name": result.data["employee_name"],
                             "status": result.data["status"],
@@ -495,18 +498,15 @@ async def _model_run(
                 used.append(ToolUse(**event.model_dump(exclude={"label"})))
                 new_facts = claims.catalog(result, len(results) - 1)
                 facts.update(new_facts)
-                messages.append(
-                    _tool_message(
-                        call.name,
-                        (
-                            {"facts": new_facts, "proposal": result.data}
-                            if call.name == "prepare_schedule_change"
-                            else {"facts": new_facts}
-                        )
-                        if result.ok
-                        else result.data,
-                    )
-                )
+                if not result.ok:
+                    tool_data = result.data
+                elif call.name == "prepare_schedule_change":
+                    tool_data = {"facts": new_facts, "proposal": result.data}
+                else:
+                    tool_data = {"facts": new_facts}
+                    if call.name == "get_schedule" and ctx.role in {"owner", "admin", "manager"}:
+                        tool_data["proposal_targets"] = result.data.get("proposal_targets", [])
+                messages.append(_tool_message(call.name, tool_data))
                 yield event
             yield StatusEvent(label="Reading the results")
             continue

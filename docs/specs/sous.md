@@ -1,6 +1,6 @@
 # Sous: Operations Assistant
 
-**Status:** Built: grounded read tools plus manager-reviewed new-shift proposal path · **Owner:** TBD · **Last updated:** 2026-11-02
+**Status:** Built: grounded read tools plus manager-reviewed shift addition, adjustment, and removal proposals · **Owner:** TBD · **Last updated:** 2026-11-02
 **Related:** [ADR 0003: Read-only first](../adr/0003-sous-read-only-first.md), [Integration layer](integration-layer.md), [Architecture](../architecture.md)
 
 ## Problem
@@ -12,11 +12,11 @@ Managers have operating questions that cut across modules: "Why was labor high T
 - Answer operations questions from authorized, current, traceable data.
 - Return evidence with every answer: values, units, time window, source references, and data freshness.
 - Keep authorization, calculations, and writes in deterministic service code. The model interprets intent and explains results. It doesn't decide scope, compute metrics, or touch the database.
-- Propose a single new schedule shift as a version-checked draft that a manager approves; the normal Team publish flow still controls when employees see it ([ADR 0003](../adr/0003-sous-read-only-first.md)).
+- Propose a single schedule addition, adjustment, or removal as a version-checked draft that a manager approves; the normal Team publish flow still controls when employees see it ([ADR 0003](../adr/0003-sous-read-only-first.md)).
 
 ## Non-goals (v1)
 
-- Direct schedule edits/removals and any action that bypasses manager approval and normal publishing.
+- Schedule changes that bypass manager approval and normal publishing.
 - General-purpose SQL, code execution, or open web access for the model.
 - Vector search or multi-agent orchestration without a measured need.
 - Payroll, payments, or HR actions.

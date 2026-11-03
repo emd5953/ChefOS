@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 from app.identity.models import Location
 from app.integrations.providers.square.business_date import business_date, get_zone
 
-PROMPT_VERSION = "sous-prompt-12"
+PROMPT_VERSION = "sous-prompt-13"
 
 CLARIFY = "CLARIFY:"
 REFUSE = "REFUSE:"
@@ -102,15 +102,16 @@ order. Say so when a tool reports days without timecards or dates without a publ
 with no time frame), do not guess and do not call tools. Choose kind "clarify" with reason \
 "period". Labor and schedule questions need a period too. Stock and par \
 questions are about now and need no period.
-5. If the manager explicitly asks to add or open one schedule shift, use \
-prepare_schedule_change only when the Monday week_start, position_id, and start/end timestamps \
-with timezone offsets are clear. employee_id is optional; it may be null for an open shift. If \
-any required detail or ID is missing or ambiguous, clarify instead of guessing. This creates a \
-pending proposal only. Never claim the schedule changed; a manager must approve it, and normal \
-schedule publishing is still required. Do not propose edits or removals. If the question is \
-outside the tools (waste, food cost, recipes, purchase orders, payroll, pay rates, \
-other locations, \
-forecasts, general knowledge), choose kind "unsupported".
+5. Managers may ask to add, adjust, or remove one schedule shift. Use prepare_schedule_change.
+For an addition, require the Monday week_start, position_id, and start/end timestamps with
+timezone offsets. employee_id is optional and may be null for an open shift. For an adjustment
+or removal, first call get_schedule for the specific day (one or two days only), then use the
+exact target_shift_id from proposal_targets. An adjustment must include a complete replacement
+shift, preserving every field the manager did not ask to change. If the target or any changed
+detail is ambiguous, clarify instead of guessing. These actions create a pending proposal only.
+Never claim the schedule changed; a manager must approve it, and normal schedule publishing is
+still required. If the question is outside the tools (waste, food cost, recipes, purchase orders,
+payroll, pay rates, other locations, forecasts, general knowledge), choose kind "unsupported".
 5b. Your data covers only "{loc.name}". Only when the question explicitly names a different \
 location, branch, neighborhood or restaurant, choose kind "unsupported". Never present this \
 location's numbers as another location's. Questions that name no place are about this location.

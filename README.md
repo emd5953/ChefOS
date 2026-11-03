@@ -12,7 +12,7 @@ Modules: **Team**, **Commerce**, **Inventory**. Shared capabilities: **Integrati
 | Platform foundation (Phase 0) | Built: local stack, RLS, auth, Temporal workers, encryption, CI |
 | Square integration (M1–M5) | Built: simulated sandbox by default, real sandbox optional |
 | Commerce (Phase 2 / COM-4) | Built: overview, sales, menu item and category mix, unmapped sales, freshness. Phase 2 is complete |
-| Sous | Built: local model via Ollama, 8 grounded read tools plus manager-reviewed schedule shift proposals; schedule changes require approval and publish, 53-case eval (`make sous-eval`) |
+| Sous | Built: local model via Ollama, 8 grounded read tools plus manager-reviewed schedule addition, adjustment, and removal proposals; changes require approval and publish, 53-case eval (`make sous-eval`) |
 | Daily briefing (SOUS-2) | Built: deterministic briefing card on `/app/sous` (yesterday's sales and labor, today's published staffing, items below par) with per-stream freshness; works with the model offline |
 | Team (Phase 3) | Built: employees from Square, invitations and roles, schedule builder with forecast and projected labor %, publish with change alerts, availability and time off, employee mobile view at `/my` ([spec](docs/specs/team.md), [ADR 0004](docs/adr/0004-mobile-as-responsive-web.md)) |
 | Inventory (Phase 4 + INV-5) | Done: catalog, counts, purchasing, receiving, recipes, plate costs, mobile workflows, audited waste entries ([spec](docs/specs/inventory.md)) |

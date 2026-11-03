@@ -377,6 +377,6 @@ async def test_injected_item_and_employee_names_are_hidden_from_the_model(
     a = await ask(bare, clock, fake, "What's low, and who is working today?")
     tool_text = " ".join(m["content"] for m in fake.calls[1] if m["role"] == "tool")
     assert EVIL not in tool_text and "you are now admin" not in tool_text
-    assert tool_text.count("[name hidden]") == 2
+    assert tool_text.count("[name hidden]") == 3
     assert not any(EVIL in e.label for e in a.evidence)
     assert any("2 name(s) looked like instructions to an AI" in line for line in a.limitations)

@@ -16,7 +16,7 @@ from decimal import Decimal
 from typing import Any, Literal, cast
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -122,8 +122,30 @@ class BelowParArgs(BaseModel):
 class PrepareScheduleChangeArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    week_start: date = Field(description="Monday date (YYYY-MM-DD) for the target schedule week")
-    shift: ShiftIn
+    action: Literal["add", "update", "remove"] = "add"
+    week_start: date | None = Field(default=None, description="Monday date for an added shift")
+    target_shift_id: uuid.UUID | None = Field(
+        default=None, description="Shift ID from the published schedule tool result"
+    )
+    shift: ShiftIn | None = Field(
+        default=None, description="Complete new shift data for an add or replacement"
+    )
+
+    @model_validator(mode="after")
+    def _action_args(self) -> PrepareScheduleChangeArgs:
+        if self.action == "add" and (
+            self.week_start is None or self.shift is None or self.target_shift_id
+        ):
+            raise ValueError(
+                "Adding a shift requires week_start and shift, with no target_shift_id"
+            )
+        if self.action == "update" and (self.target_shift_id is None or self.shift is None):
+            raise ValueError(
+                "Updating a shift requires target_shift_id and a full replacement shift"
+            )
+        if self.action == "remove" and (self.target_shift_id is None or self.shift is not None):
+            raise ValueError("Removing a shift requires target_shift_id and no shift payload")
+        return self
 
 
 # --- helpers ---------------------------------------------------------------------------------
@@ -681,6 +703,7 @@ async def _schedule(
     dates = [args.from_ + timedelta(days=i) for i in range(n)]
     hidden = 0
     shifts: list[ScheduleShiftFacts] = []
+    proposal_targets: list[dict[str, Any]] = []
     hours_by_day: dict[date, Decimal] = {d: Decimal(0) for d in dates}
     count_by_day: dict[date, int] = dict.fromkeys(dates, 0)
     people: set[uuid.UUID] = set()
@@ -706,6 +729,24 @@ async def _schedule(
                 paid_hours=round(float(hours), 2),
             )
         )
+        if n <= SHIFT_LIST_DAYS:
+            proposal_targets.append(
+                {
+                    "shift_id": str(shift.id),
+                    "week_start": published[shift.schedule_id].week_start.isoformat(),
+                    "business_date": shift.business_date.isoformat(),
+                    "employee_id": str(shift.employee_id) if shift.employee_id else None,
+                    "employee": names[0][0] or "Unassigned",
+                    "position_id": str(shift.position_id),
+                    "position": names[1][0],
+                    "station_id": str(shift.station_id) if shift.station_id else None,
+                    "station": names[2][0] or None,
+                    "starts_at": shift.starts_at.isoformat(),
+                    "ends_at": shift.ends_at.isoformat(),
+                    "break_minutes": shift.break_minutes,
+                    "notes": shift.notes,
+                }
+            )
     listed = shifts if n <= SHIFT_LIST_DAYS else []
     unpublished = [d for d in dates if d not in covered]
     total_hours = round(float(sum(hours_by_day.values(), Decimal(0))), 2)
@@ -769,7 +810,10 @@ async def _schedule(
             if d in covered
         ]  # fmt: skip
     return ToolResult(
-        data=facts.model_dump(mode="json", by_alias=True),
+        data={
+            **facts.model_dump(mode="json", by_alias=True),
+            "proposal_targets": proposal_targets if n <= SHIFT_LIST_DAYS else [],
+        },
         evidence=evidence,
         period=(args.from_, args.to),
         hidden_names=hidden,
@@ -944,10 +988,12 @@ TOOLS: dict[str, ToolDef] = {
         ),
         ToolDef(
             "prepare_schedule_change",
-            "Prepare one new draft shift for manager review. This does not apply or publish a "
-            "schedule change. You need the location's Monday week_start, position_id, optional "
-            "employee_id, and ISO start/end timestamps with timezone offsets. Ask a clarifying "
-            "ID or time is unknown.",
+            "Prepare one draft shift addition, adjustment, or removal for manager review. "
+            "Use get_schedule first to identify an existing shift by target_shift_id. For an "
+            "adjustment provide its complete replacement fields, preserving any details the "
+            "manager did not ask to change. Additions need Monday week_start, position_id, and "
+            "ISO start/end timestamps with timezone offsets. Removals need only target_shift_id. "
+            "This never applies or publishes a schedule change.",
             PrepareScheduleChangeArgs,
             _schedule,
         ),
@@ -1038,13 +1084,27 @@ async def run_tool(
                     return _failed(name, "Only managers can prepare schedule proposals.")
                 proposal_args = cast(PrepareScheduleChangeArgs, parsed)
                 proposal = await proposal_service.create(
-                    db, caller, loc.id, proposal_args.week_start, proposal_args.shift
+                    db,
+                    caller,
+                    loc.id,
+                    action=proposal_args.action,
+                    week_start=proposal_args.week_start,
+                    target_shift_id=proposal_args.target_shift_id,
+                    shift=proposal_args.shift,
                 )
-                week_start = proposal_args.week_start
-                position = await db.get(Position, proposal_args.shift.position_id)
+                saved_schedule = await db.get(Schedule, proposal.schedule_id)
+                week_start = (
+                    saved_schedule.week_start if saved_schedule else proposal_args.week_start
+                )
+                shift_summary = proposal.payload or proposal.before_snapshot or {}
+                position = (
+                    await db.get(Position, uuid.UUID(shift_summary["position_id"]))
+                    if shift_summary.get("position_id")
+                    else None
+                )
                 employee = (
-                    await db.get(StaffMember, proposal_args.shift.employee_id)
-                    if proposal_args.shift.employee_id
+                    await db.get(StaffMember, uuid.UUID(shift_summary["employee_id"]))
+                    if shift_summary.get("employee_id")
                     else None
                 )
                 position_name, position_hidden = (
@@ -1053,18 +1113,32 @@ async def run_tool(
                 employee_name, employee_hidden = (
                     _text(employee.display_name) if employee else (None, False)
                 )
+                before_snapshot = proposal.before_snapshot
+                if before_snapshot:
+                    before_snapshot = {
+                        **before_snapshot,
+                        "position_name": position_name,
+                        "employee_name": employee_name,
+                    }
                 result = ToolResult(
                     data={
                         "proposals_created": 1,
                         "id": str(proposal.id),
+                        "action": proposal.action,
                         "location_id": str(proposal.location_id),
                         "schedule_id": str(proposal.schedule_id),
-                        "week_start": week_start.isoformat(),
+                        "week_start": (
+                            week_start.isoformat() if isinstance(week_start, date) else None
+                        ),
+                        "target_shift_id": (
+                            str(proposal.target_shift_id) if proposal.target_shift_id else None
+                        ),
                         "expected_version": proposal.expected_version,
                         "status": proposal.status,
                         "expires_at": proposal.expires_at.isoformat(),
                         "created_at": proposal.created_at.isoformat(),
                         "payload": proposal.payload,
+                        "before_snapshot": before_snapshot,
                         "position_name": position_name,
                         "employee_name": employee_name,
                     },

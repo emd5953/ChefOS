@@ -248,6 +248,8 @@ export type SousScheduleProposal = {
   schedule_id: string;
   week_start: string;
   expected_version: number;
+  action: "add" | "update" | "remove";
+  target_shift_id: string | null;
   payload: {
     employee_id: string | null;
     position_id: string;
@@ -256,7 +258,21 @@ export type SousScheduleProposal = {
     ends_at: string;
     break_minutes: number;
     notes: string;
-  };
+  } | null;
+  before_snapshot: {
+    shift_id: string;
+    employee_id: string | null;
+    employee_name: string | null;
+    position_id: string;
+    position_name: string;
+    station_id: string | null;
+    station_name: string | null;
+    business_date: string;
+    starts_at: string;
+    ends_at: string;
+    break_minutes: number;
+    notes: string;
+  } | null;
   position_name: string;
   employee_name: string | null;
   status: "pending" | "approved" | "denied" | "expired" | "stale";

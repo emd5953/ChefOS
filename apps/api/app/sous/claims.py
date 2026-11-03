@@ -46,7 +46,8 @@ CONTROLLED = {
     "question": "What would you like to check, and for which day or date range?",
     "refuse": "I can help with restaurant operations using the available read-only tools.",
     "unsupported": "I can check sales, labor, published schedules, inventory below par, and data "
-    "freshness for this location. I can also prepare one new schedule shift for manager approval.",
+    "freshness for this location. I can also prepare a schedule addition, adjustment, or removal "
+    "for manager approval.",
 }
 
 
