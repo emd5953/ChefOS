@@ -1,6 +1,6 @@
 # Food cost variance (COM-6)
 
-**Status:** COM-6A through COM-6D implemented; complete-period golden eval remains · **Last updated:** 2026-11-02
+**Status:** COM-6A through COM-6D implemented, including complete-period golden evaluation · **Last updated:** 2026-11-02
 **Related:** [PRD](../prd.md), [Roadmap](../roadmap.md), [Inventory](inventory.md), [Integration layer](integration-layer.md)
 
 ## Purpose
@@ -91,7 +91,7 @@ The response state is `complete`, `partial`, or `unavailable`. A complete locati
 
 ### Implemented backend foundation
 
-Migration `0019` establishes the baseline at rollout and snapshots current recipes and menu links. Recipe creation and edits append immutable recipe versions with ingredient snapshots; menu link changes append effective-dated assignments, including explicit unlinks. Records before the baseline remain unavailable. `POST /v1/inventory/food-cost-variance` validates submitted count anchors and calculates item-level actual/theoretical usage, period weighted-average received cost, exclusions, returns, freshness, and completeness. It leaves location totals null when the input is partial. Recipe and menu mapping writes continue to use their existing audit events. The manager UI is at `/app/inventory/food-cost`; the remaining test gap is a complete-period golden fixture.
+Migration `0019` establishes the baseline at rollout and snapshots current recipes and menu links. Recipe creation and edits append immutable recipe versions with ingredient snapshots; menu link changes append effective-dated assignments, including explicit unlinks. Records before the baseline remain unavailable. `POST /v1/inventory/food-cost-variance` validates submitted count anchors and calculates item-level actual/theoretical usage, period weighted-average received cost, exclusions, returns, freshness, and completeness. It leaves location totals null when the input is partial. Recipe and menu mapping writes continue to use their existing audit events. The manager UI is at `/app/inventory/food-cost`. The complete-period golden fixture exercises receiving, recipe mapping, completed sales, and count anchors through the API and asserts the full variance response.
 
 Opening inventory quantities and receipts are valued only for the selected operational period using the period weighted-average policy above. No cost is invented for opening stock and no claim is made that this is accounting-grade COGS. If accounting COGS becomes a requirement, make a separate decision about inventory valuation (FIFO or moving average), count valuation, transfers, and shrinkage treatment.
 
@@ -109,12 +109,12 @@ Opening inventory quantities and receipts are valued only for the selected opera
 - Recipe/sales tests: recipe edits and menu remapping across effective dates, backfilled lines before baseline, unmapped menu lines, inactive/missing ingredients, multiple variants for one menu item, and sales returns without item allocation.
 - Freshness tests: complete and partial sync, stale/failing orders, and stream cutoff before period end. Missing inputs never become zero.
 - Authorization/RLS tests: owner/admin/manager location scope, inaccessible location, employee denial, and cross-org rows.
-- Golden fixture/eval: controlled opening count, receipts, waste, completed sales, recipe versions, and closing count with hand-calculated actual/theoretical/variance; assert line-level evidence and all limitations.
+- Golden fixture/eval: a complete-period API fixture covers receipts, completed sales, recipe mapping, and opening/closing count anchors with hand-calculated actual/theoretical/variance. Pure formula and partial-period tests cover additional edge cases.
 - Property invariant: with no missing events, `opening + receipts - closing` equals summed actual depletion across items; waste is a subset and is not double-counted.
 
 ## Milestones
 
 1. **COM-6A: Semantics and versioned inputs.** Implemented: immutable recipe versions, effective-dated menu links, and org baseline. No report for data before the baseline.
 2. **COM-6B: Read model/service.** Implemented: deterministic calculations, count coverage, receipt weighted-average cost, theoretical usage, freshness, and exclusions.
-3. **COM-6C: API and tests.** Backend endpoint, pure formula tests, partial-period API test, and authorization/RLS checks implemented. A complete-period golden eval is still needed.
+3. **COM-6C: API and tests.** Backend endpoint, pure formula tests, partial- and complete-period API tests, and authorization/RLS checks implemented.
 4. **COM-6D: UI and Sous integration.** Implemented manager report at `/app/inventory/food-cost`. Sous read access remains a separately gated follow-up until its authorization, grounding, and limitation evals pass.
