@@ -11,7 +11,7 @@ The demo already connects real sales to labor, schedules, inventory and Sous, bu
 
 **Goals:** finish scoped Sous reads and their evals; provide a location's in-app daily briefing; show item-level sales mix, log waste against stock, and accept external sales pushes using identity-owned API keys. Evaluate deferred Team requirements and ship high-value, small additions.
 
-**Non-goals:** email delivery; LLM-authored or automatic schedule edits; Toast or supplier connectors, payroll export, invoices/AP, food-cost variance, transfers, 86 broadcast, native push, and broad labor compliance. These add external dependencies, substantial workflow or reconciliation scope, or weaker demo value per effort than the selected features. Do not include TEAM-5 trades/open shifts (approval, coverage and employee notification flows are a larger vertical slice), or TEAM-7 tasks/checklists (new assignment, recurrence and completion workflows). Revisit after the selected demo path.
+**Original non-goals:** email delivery; LLM-authored or automatic schedule edits; Toast or supplier connectors, payroll export, invoices/AP, food-cost variance, transfers, 86 broadcast, native push, and broad labor compliance. These add external dependencies, substantial workflow or reconciliation scope, or weaker demo value per effort than the selected features. TEAM-5 and TEAM-7 were also outside the original slice. TEAM-5 open-shift claims have since been implemented as a follow-on; trade proposals remain unimplemented ([status](team-shift-coverage.md)). TEAM-7 tasks/checklists remain deferred.
 
 ## Approach
 

@@ -1,13 +1,13 @@
 # Roadmap
 
-**Last updated:** 2026-10-21
+**Last updated:** 2026-11-02
 **Related:** [PRD](prd.md), [ADR 0001: Integration-first](adr/0001-integration-first.md)
 
 The sequence is integration-first. Module features are built on real imported data, not seeded records. Each phase has an exit criterion. Phases overlap where noted.
 
 ## Current state
 
-As of 2026-10-20:
+As of 2026-11-02:
 
 - **Phase 0:** done.
 - **Phase 1:** M1–M5 done in simulated mode. Real-sandbox mode is untested.
@@ -15,7 +15,7 @@ As of 2026-10-20:
 - **Phase 5:** done. Sous read-only over Commerce, Team (labor, published schedule) and Inventory (below par). The 53-case eval passes 52/53 on qwen3:8b and meets all thresholds (0 authorization violations, 100% grounded, 97.7% value correctness, 97.3% evidence coverage).
 - **Phase 3:** done ([spec](specs/team.md), T1–T5). Employees from Square, logins by invitation, schedule builder with forecast and projected labor %, publish with change alerts, availability and time off with approvals, and an employee mobile view at `/my` ([ADR 0004](adr/0004-mobile-as-responsive-web.md)). Seeded by `make demo`.
 - **Phase 4:** done ([spec](specs/inventory.md)). INV-1 to INV-4 and MOB-3: catalog, counts with exceptions, purchasing and receiving, recipes with plate cost, phone-sized count and receive.
-- **Phase 6:** selected scope done ([spec](specs/breadth.md), B1–B6): Sous Team/Inventory tools, daily briefing (SOUS-2), product mix (COM-4), waste (INV-5), push API with API keys (INT-6), clock-in alerts and attendance (TEAM-6). Follow-ups: F1 gives pushed sales a 26-hour freshness window; F2 fixes two Sous eval misses; F3 counts open punches as running time. Still deferred: Toast connector, payroll export, shift trades and open shifts, Sous draft-and-approve, supplier/invoice connectors, food cost variance.
+- **Phase 6:** selected scope done ([spec](specs/breadth.md), B1–B6): Sous Team/Inventory tools, daily briefing (SOUS-2), product mix (COM-4), waste (INV-5), push API with API keys (INT-6), clock-in alerts and attendance (TEAM-6). Follow-ups: F1 gives pushed sales a 26-hour freshness window; F2 fixes two Sous eval misses; F3 counts open punches as running time. **Implemented follow-ons:** TEAM-5 open-shift claims and shift trades ([spec](specs/team-shift-coverage.md)), Sous manager-reviewed new-shift proposals, and COM-6 count-anchored food cost variance with an inventory screen ([spec](specs/food-cost-variance.md)). A complete-period food-cost golden eval remains. Still deferred: Toast connector, payroll export, supplier/invoice connectors.
 - **Prototype workspace:** deleted from `main`. UX reference at tag `prototype-v0`; run it with `git worktree add ../chefos-prototype prototype-v0 && cd ../chefos-prototype && python3 server.py`.
 
 ## Phase 0: Platform foundation
@@ -62,7 +62,7 @@ Canonical metric definitions, typed read tools over commerce/team/inventory serv
 
 ## Phase 6: Breadth (P1/P2)
 
-Push API (M6), Toast connector (fixtures), payroll export, shift trades and open shifts, product mix, daily flash, waste and yield, Sous draft-and-approve shift changes, supplier/invoice connectors, food cost variance.
+The original Phase 6 candidate list included Push API (M6), Toast connector (fixtures), payroll export, shift trades and open shifts, product mix, daily flash, waste and yield, Sous draft-and-approve shift changes, supplier/invoice connectors, and food cost variance. The selected demo scope and subsequent follow-on work are tracked above; remaining candidates include deferred connector and payroll work.
 
 Order within Phase 6 is set by what makes the demo walkthrough strongest.
 

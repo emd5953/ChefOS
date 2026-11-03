@@ -52,7 +52,7 @@ The prototype frontend is not a pure duplicate. `server.py` serves the root `ind
 | Team: workspace accounts and invites | `users`, `invitations`, `auth/accept-invitation` | Team spec, Phase 3 (employee logins for MOB-1) | Deferred, Phase 3 |
 | Team: time clock | `time-entries/clock-in`, `clock-out` | Square timecards → `daily_labor` (M5) | Dropped: PRD non-goal "our own time clock in v1" |
 | Schedule | `shifts` | Team spec, Phase 3 (TEAM-2, TEAM-3) | Deferred, Phase 3 |
-| Shift requests | `shift-requests` | Time off: TEAM-4, Phase 3. Trades and open shifts: TEAM-5, Phase 6 | Deferred, Phases 3 and 6 |
+| Shift requests | `shift-requests` | Time off: TEAM-4, Phase 3. TEAM-5 claims and trades ([status](team-shift-coverage.md)) | Time off, open-shift claims, and trades built |
 | Tasks | `tasks` | TEAM-7 (P1), after Phase 3 | Deferred, unscheduled |
 | Team chat | `channels`, `channels/:id/messages` | None | Dropped: no PRD requirement |
 | Ask Sous | `sous` (keyword matching) | `/app/sous`; `/v1/sous/ask[/stream]` (LLM, typed tools, evidence) | Covered |

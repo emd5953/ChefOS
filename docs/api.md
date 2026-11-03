@@ -307,6 +307,10 @@ type Schedule = {
 | Method | Path | Body | Response |
 | --- | --- | --- | --- |
 | GET | `/v1/team/requests?location_id&status=pending\|history` | none | `200 { time_off: TimeOff[], availability: Availability[] }` for employees the caller manages (at `location_id` if given). Pending oldest first; history (decided) newest first |
+| GET | `/v1/team/shift-coverage-requests?location_id` | none | `200 { data: ShiftCoverageRequest[] }` pending open-shift claims for the manager's location |
+| POST | `/v1/team/shift-coverage-requests/{id}/decide` | `{ decision: approve\|deny, note? }` | Manager decision. Approval assigns the draft shift; the manager must publish the schedule |
+| GET | `/v1/team/shift-trades?location_id` | none | `200 { data: ShiftTrade[] }` accepted trades awaiting manager decision |
+| POST | `/v1/team/shift-trades/{id}/decide` | `{ decision: approve\|deny, note? }` | Manager decision. Approval swaps draft assignments; publish the schedule to apply it |
 | POST | `/v1/team/time-off/{id}/decide` | `{ decision: "approve" \| "deny", note? }` | `200 TimeOff`. `409` if not pending |
 | POST | `/v1/team/availability/{id}/decide` | `{ decision: "approve" \| "reject", note? }` | `200 Availability`. `409` if not pending |
 
@@ -360,6 +364,13 @@ Any signed-in role. `/v1/me/*` resolves the employee from the session's user (ne
 | Method | Path | Body | Response |
 | --- | --- | --- | --- |
 | GET | `/v1/me/week?week_start` | none | `200 MyWeek`. `week_start` defaults to the current week at the employee's location |
+| GET | `/v1/me/open-shifts` | none | `200 { data: OpenShift[] }` for future published open shifts at the employee's locations |
+| POST | `/v1/me/shift-coverage-requests` | `{ published_shift_id }` | `201 ShiftCoverageRequest`; employee must have the position and location assignment |
+| POST | `/v1/me/shift-coverage-requests/{id}/cancel` | none | Cancels the employee's pending request |
+| GET | `/v1/me/shift-trades` | none | `200 { data: ShiftTrade[] }` requests involving the signed-in employee |
+| POST | `/v1/me/shift-trades` | `{ offered_shift_id, requested_shift_id }` | `201 ShiftTrade` in `pending_recipient`; both shifts must be future published shifts in the same schedule |
+| POST | `/v1/me/shift-trades/{id}/respond` | `{ decision: accept\|decline, note? }` | Coworker response. Acceptance moves the trade to the manager inbox |
+| POST | `/v1/me/shift-trades/{id}/cancel` | none | Requester cancels a trade that has not been decided by a manager |
 | GET | `/v1/notifications?unread_only` | none | `200 { data: Notification[] /* newest 50 */, unread_count }` |
 | POST | `/v1/notifications/read` | `{ ids?: string[], all?: boolean }` | `200 { unread_count }`. Only the caller's own notifications |
 | GET | `/v1/me/availability` | none | `200 { current: Availability \| null, pending: Availability \| null, upcoming: Availability[] }` |
@@ -375,11 +386,13 @@ type MyWeek = { week_start: string; employee: { id: string; display_name: string
                 my_shifts: Array<{ id: string; location_id: string; business_date: string; starts_at: string;
                                    ends_at: string; break_minutes: number; position_name: string;
                                    position_color: string; station_name: string | null; notes: string }>;
-                team_shifts: Array<{ location_id: string; business_date: string; starts_at: string; ends_at: string;
+                team_shifts: Array<{ id: string; location_id: string; business_date: string; starts_at: string; ends_at: string;
                                      employee_name: string; position_name: string; position_color: string }> }
 type Notification = { id: string; kind: "schedule_published" | "schedule_changed" | "time_off_decided" |
                         "availability_decided" | "time_off_requested" | "availability_submitted" |
-                        "employee_deactivated" | "shift_late" | "shift_missed";
+                        "employee_deactivated" | "shift_late" | "shift_missed" |
+                        "shift_coverage_requested" | "shift_coverage_decided" | "shift_trade_requested" |
+                        "shift_trade_accepted" | "shift_trade_decided" | "shift_trade_withdrawn";
                       title: string; body: string; link: string | null /* in-app path */;
                       entity_type: string | null; entity_id: string | null;
                       created_at: string; read_at: string | null }
@@ -426,9 +439,17 @@ Item base units must be `g` for mass, `ml` for volume, or `ea` for count. INV-1 
 
 `quantity` is positive; `unit` defaults to the item's base unit and otherwise must be a configured conversion. Waste snapshots the latest known per-base-unit receipt cost, decrements stock, adds a `waste` stock movement, and writes an audit event atomically. Entries that would make stock negative are rejected. `WasteEntry` includes the quantity in base units, reason, business date, creator, and creation time.
 
+### Food cost variance (COM-6)
+
+| Method | Path | Body | Response |
+| --- | --- | --- | --- |
+| POST | `/v1/inventory/food-cost-variance` | `{ location_id, opening_count_session_ids, closing_count_session_ids }` | `FoodCostVarianceOut` |
+
+Owner, admin, and manager roles can request a report for locations in their scope. Supply one submitted opening and closing count session for each active storage area. The report measures the day after the opening count through the closing count date. It exposes count coverage, mapped sales-line coverage, order freshness, returns, historical recipe exclusions, per-item quantities and costs, and limitations. Location totals and overall variance percent are null unless all required inputs are complete. The manager UI is at `/app/inventory/food-cost`. The endpoint is an operational estimate, not accounting COGS. See the [COM-6 spec](specs/food-cost-variance.md).
+
 ## Sous
 
-Read-only operations assistant over a location's sales, labor, published schedule and inventory pars. The model picks from eight typed tools (`get_sales_summary`, `get_daily_sales`, `get_top_items`, `get_today`, `get_data_freshness`, `get_labor_summary`, `get_schedule`, `find_items_below_par`) and selects facts from their results. The server renders each selected fact with its metric, period, entity, signed value and unit. Model-authored prose never becomes an answer; evidence and limitations are also computed by the API. Design: [Sous spec](specs/sous.md).
+Operations assistant over a location's sales, labor, published schedule and inventory pars. Eight read tools select grounded facts; `prepare_schedule_change` can create a single-shift manager-reviewed draft. Applying it requires explicit approval and normal schedule publishing. Design: [Sous spec](specs/sous.md).
 
 ```ts
 type SousKind = "answer" | "clarify" | "refuse" | "unsupported" | "evidence_only"
@@ -436,6 +457,10 @@ type Evidence = { label: string; value: number;
                   unit: "usd_cents" | "count" | "percent" | "percent_pts" | "hours"
                         | "g" | "ml" | "ea" /* stock in an item's base unit */;
                   source: string /* tool name */; as_of: string | null }
+type ScheduleProposal = { id: string; location_id: string; schedule_id: string; week_start: string;
+                         expected_version: number; payload: Record<string, unknown>;
+                         position_name: string; employee_name: string | null; status: string;
+                         expires_at: string; created_at: string }
 type SousAnswer = {
   conversation_id: string; turn_id: string; conversation_version: number;
   kind: SousKind;
@@ -445,7 +470,8 @@ type SousAnswer = {
   limitations: string[];                // stale / failing / not connected streams, data gaps
                                         // (no timecards, unpublished dates, no par), failed tools
   tools_used: Array<{ name: string; args: Record<string, unknown>; ms: number; ok: boolean }>;
-  model: string; prompt_version: string; request_id: string }
+  model: string; prompt_version: string; request_id: string;
+  proposals: ScheduleProposal[] }
 type SousStatus = { provider: "ollama" | "fake"; model: string;
                     available: boolean /* reachable and model pulled */;
                     model_pulled: boolean; prompt_version: string }
@@ -483,7 +509,16 @@ terminal answer or error. The answer is committed before delivery.
 returning 204. Session, staff role, CSRF, ownership and current location access are required.
 Clearing fences any still-running answer; unknown or inaccessible IDs return 404.
 
-- `kind` is `clarify` when the question needs a period or other detail, `refuse` when asked to leave its role, `unsupported` for anything outside the tools (editing schedules, placing orders, waste, payroll), and `evidence_only` when a fact selection is invalid after one repair, or the request exceeds the context budget (`answer` is deterministic and `evidence` carries any collected figures). Only `answer` and `evidence_only` include `period`, `evidence` and `limitations`.
+Sous can prepare a single new shift proposal with `prepare_schedule_change`. It creates a
+24-hour, version-checked draft only; publishing and changing the employee-visible schedule
+still require the normal Team schedule publish flow. The answer includes any proposal card.
+Managers can use `GET /v1/sous/proposals` to list pending proposals and
+`POST /v1/sous/proposals/{id}/decision` with `{ approve: boolean }` to approve or decline.
+Approval revalidates the schedule version and shift payload under lock. A changed schedule
+returns a `stale` proposal without writing a shift. `POST /v1/sous/proposals` accepts the same
+structured proposal directly for manager clients.
+
+- `kind` is `clarify` when the question needs a period or other detail, `refuse` when asked to leave its role, `unsupported` for anything outside the tools (direct schedule edits/removals, placing orders, waste, payroll), and `evidence_only` when a fact selection is invalid after one repair, or the request exceeds the context budget (`answer` is deterministic and `evidence` carries any collected figures). Only `answer` and `evidence_only` include `period`, `evidence` and `limitations`.
 - Evidence money is integer cents (`usd_cents`); percents are in percent units.
 - A `location_id` outside the user's scope is `404 not_found`, as for Commerce.
 - `409 sous_turn_running`: another attempt is still active; retry after it finishes.
