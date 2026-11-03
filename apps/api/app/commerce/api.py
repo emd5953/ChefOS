@@ -88,6 +88,18 @@ async def set_menu_item_recipe(
     )
     if result.first() is None:
         raise not_found("Menu item not found")
+    await db.execute(
+        text("""INSERT INTO menu_recipe_assignments(
+        id,org_id,menu_item_id,recipe_id,created_by,effective_at)
+        VALUES(:id,:org,:menu,:recipe,:actor,clock_timestamp())"""),
+        {
+            "id": uuid.uuid7(),
+            "org": ctx.org_id,
+            "menu": menu_item_id,
+            "recipe": recipe_id,
+            "actor": ctx.user_id,
+        },
+    )
     await audit.record(
         db,
         org_id=ctx.org_id,

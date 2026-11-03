@@ -11,6 +11,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     MetaData,
     Numeric,
@@ -82,6 +83,64 @@ Table(
     UniqueConstraint("org_id", "id", name="uq_item_unit_conversions_org_id_id"),
     ForeignKeyConstraint(["org_id", "item_id"], ["inventory_items.org_id", "inventory_items.id"]),
     CheckConstraint("base_units_per_unit > 0", name="base_units_per_unit_positive"),
+)
+
+# Immutable snapshots used by historical food cost reporting. Registered here for migration drift.
+Table(
+    "recipe_versions",
+    m,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("org_id", UUID(as_uuid=True), nullable=False),
+    Column("recipe_id", UUID(as_uuid=True), nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("name", String, nullable=False),
+    Column("yield_quantity", Numeric(18, 6), nullable=False),
+    Column("yield_unit", String, nullable=False),
+    Column("active", Boolean, nullable=False),
+    Column("effective_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("created_by", UUID(as_uuid=True), ForeignKey("users.id")),
+    UniqueConstraint("org_id", "recipe_id", "version", name="uq_recipe_versions_version"),
+    UniqueConstraint("org_id", "id", name="uq_recipe_versions_org_id_id"),
+    ForeignKeyConstraint(["org_id", "recipe_id"], ["recipes.org_id", "recipes.id"]),
+    Index("ix_recipe_versions_effective", "org_id", "recipe_id", "effective_at"),
+)
+Table(
+    "recipe_version_ingredients",
+    m,
+    Column("org_id", UUID(as_uuid=True), nullable=False),
+    Column("recipe_version_id", UUID(as_uuid=True), primary_key=True),
+    Column("item_id", UUID(as_uuid=True), primary_key=True),
+    Column("quantity_base", Numeric(18, 6), nullable=False),
+    Column("item_name", String, nullable=False),
+    Column("base_unit", String, nullable=False),
+    ForeignKeyConstraint(
+        ["org_id", "recipe_version_id"],
+        ["recipe_versions.org_id", "recipe_versions.id"],
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(["org_id", "item_id"], ["inventory_items.org_id", "inventory_items.id"]),
+    CheckConstraint("quantity_base > 0", name="recipe_version_quantity_positive"),
+)
+Table(
+    "menu_recipe_assignments",
+    m,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("org_id", UUID(as_uuid=True), nullable=False),
+    Column("menu_item_id", UUID(as_uuid=True), nullable=False),
+    Column("recipe_id", UUID(as_uuid=True)),
+    Column("effective_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("created_by", UUID(as_uuid=True), ForeignKey("users.id")),
+    ForeignKeyConstraint(["org_id", "menu_item_id"], ["menu_items.org_id", "menu_items.id"]),
+    ForeignKeyConstraint(["org_id", "recipe_id"], ["recipes.org_id", "recipes.id"]),
+    Index("ix_menu_recipe_assignments_effective", "org_id", "menu_item_id", "effective_at"),
+)
+Table(
+    "food_cost_baselines",
+    m,
+    Column("org_id", UUID(as_uuid=True), primary_key=True),
+    Column("effective_at", DateTime(timezone=True), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    ForeignKeyConstraint(["org_id"], ["organizations.id"]),
 )
 Table(
     "item_packs",

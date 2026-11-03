@@ -47,6 +47,7 @@ export function Inventory() {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Link className="rounded-lg border border-border p-3 text-center text-sm font-medium hover:bg-muted" href={current ? `/app/inventory/purchasing?loc=${current.id}` : "/app/inventory/purchasing"}>Purchase orders</Link>
         <Link className="rounded-lg border border-border p-3 text-center text-sm font-medium hover:bg-muted" href={current ? `/app/inventory/recipes?loc=${current.id}` : "/app/inventory/recipes"}>Recipes & costs</Link>
+        <Link className="rounded-lg border border-border p-3 text-center text-sm font-medium hover:bg-muted" href={current ? `/app/inventory/food-cost?loc=${current.id}` : "/app/inventory/food-cost"}>Food cost variance</Link>
         <Link className="rounded-lg border border-border p-3 text-center text-sm font-medium hover:bg-muted" href={current ? `/app/inventory/count?loc=${current.id}` : "/app/inventory/count"}>Count sessions</Link>
         <Link className="rounded-lg border border-border p-3 text-center text-sm font-medium hover:bg-muted" href={current ? `/app/inventory/receive?loc=${current.id}` : "/app/inventory/receive"}>Receive</Link>
       </div>

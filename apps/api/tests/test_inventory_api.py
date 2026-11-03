@@ -3,6 +3,8 @@
 import uuid
 
 import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 
 async def test_catalog_item_supplier_pack_and_par(acct: dict) -> None:
@@ -95,3 +97,80 @@ async def test_catalog_rejects_supplier_from_another_org(acct: dict) -> None:
         headers=acct["headers"],
     )
     assert response.status_code == 404
+
+
+async def test_recipe_and_menu_mapping_history_is_append_only(
+    acct: dict, owner_engine: AsyncEngine
+) -> None:
+    client, headers = acct["client"], acct["headers"]
+    item = await client.post(
+        "/v1/inventory/items",
+        json={"name": "History Flour", "base_unit": "g", "dimension": "mass"},
+        headers=headers,
+    )
+    assert item.status_code == 201, item.text
+    recipe = await client.post(
+        "/v1/inventory/recipes",
+        json={
+            "name": "Bread",
+            "yield_quantity": 1,
+            "yield_unit": "portion",
+            "ingredients": [{"item_id": item.json()["id"], "quantity_base": 300}],
+        },
+        headers=headers,
+    )
+    assert recipe.status_code == 201, recipe.text
+    recipe_id = recipe.json()["id"]
+    updated = await client.patch(
+        f"/v1/inventory/recipes/{recipe_id}",
+        json={
+            "yield_quantity": 2,
+            "ingredients": [{"item_id": item.json()["id"], "quantity_base": 500}],
+        },
+        headers=headers,
+    )
+    assert updated.status_code == 200, updated.text
+
+    menu_id = uuid.uuid4()
+    async with owner_engine.begin() as conn:
+        await conn.execute(
+            text("INSERT INTO menu_items(id,org_id,name) VALUES(:id,:org,'History Menu Item')"),
+            {"id": menu_id, "org": uuid.UUID(acct["org"]["id"])},
+        )
+    linked = await client.put(
+        f"/v1/commerce/menu-items/{menu_id}/recipe",
+        json={"recipe_id": recipe_id},
+        headers=headers,
+    )
+    assert linked.status_code == 200, linked.text
+    unlinked = await client.put(
+        f"/v1/commerce/menu-items/{menu_id}/recipe", json={"recipe_id": None}, headers=headers
+    )
+    assert unlinked.status_code == 200, unlinked.text
+
+    async with owner_engine.connect() as conn:
+        versions = (
+            await conn.execute(
+                text(
+                    "SELECT version,yield_quantity FROM recipe_versions WHERE recipe_id=:id ORDER BY version"
+                ),
+                {"id": recipe_id},
+            )
+        ).all()
+        ingredients = await conn.scalar(
+            text(
+                "SELECT quantity_base FROM recipe_version_ingredients WHERE recipe_version_id=(SELECT id FROM recipe_versions WHERE recipe_id=:id ORDER BY version DESC LIMIT 1)"
+            ),
+            {"id": recipe_id},
+        )
+        mappings = (
+            await conn.execute(
+                text(
+                    "SELECT recipe_id FROM menu_recipe_assignments WHERE menu_item_id=:id ORDER BY effective_at,id"
+                ),
+                {"id": menu_id},
+            )
+        ).all()
+    assert [(v.version, float(v.yield_quantity)) for v in versions] == [(1, 1.0), (2, 2.0)]
+    assert float(ingredients) == 500
+    assert [r.recipe_id for r in mappings] == [uuid.UUID(recipe_id), None]

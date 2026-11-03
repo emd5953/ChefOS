@@ -13,6 +13,8 @@ from app.audit import service as audit
 from app.errors import not_found, validation_error
 from app.identity.models import Location
 from app.integrations.providers.square.business_date import business_date as calculate_business_date
+from app.inventory.food_cost import build_variance
+from app.inventory.food_cost_schemas import FoodCostVarianceIn, FoodCostVarianceOut
 from app.inventory.schemas import (
     MAX_QUANTITY,
     ConversionUpdate,
@@ -39,6 +41,16 @@ from app.security.sessions import AuthDep, OrgSession, require_role
 
 router = APIRouter(prefix="/v1/inventory", tags=["inventory"])
 _MANAGERS = {"owner", "admin", "manager"}
+
+
+@router.post("/food-cost-variance", response_model=FoodCostVarianceOut)
+async def food_cost_variance(
+    body: FoodCostVarianceIn, ctx: AuthDep, db: OrgSession
+) -> FoodCostVarianceOut:
+    """Count-anchored operational variance. This is not accounting COGS."""
+    require_role(ctx, _MANAGERS)
+    location = await _location(ctx, db, body.location_id)
+    return await build_variance(db, ctx.org_id, location, body)
 
 
 def _location_business_date(location: Location) -> date:
@@ -1453,6 +1465,7 @@ async def create_recipe(body: RecipeCreate, ctx: AuthDep, db: OrgSession) -> dic
                 "unit": i.base_unit,
             },
         )
+    await _snapshot_recipe(db, ctx.org_id, recipe_id, ctx.user_id)
     await audit.record(
         db,
         org_id=ctx.org_id,
@@ -1529,6 +1542,7 @@ async def update_recipe(
                     "unit": i.base_unit,
                 },
             )
+    await _snapshot_recipe(db, ctx.org_id, recipe_id, ctx.user_id)
     await audit.record(
         db,
         org_id=ctx.org_id,
@@ -1538,6 +1552,49 @@ async def update_recipe(
         action="updated",
     )
     return _row(result.one())
+
+
+async def _snapshot_recipe(
+    db: OrgSession, org_id: uuid.UUID, recipe_id: uuid.UUID, actor_id: uuid.UUID
+) -> None:
+    """Append an immutable snapshot after every recipe write."""
+    recipe = await db.execute(
+        text("SELECT * FROM recipes WHERE id=:id AND org_id=:org"),
+        {"id": recipe_id, "org": org_id},
+    )
+    row = recipe.first()
+    if row is None:
+        raise not_found("Recipe not found")
+    version = int(
+        await db.scalar(
+            text(
+                "SELECT COALESCE(MAX(version),0)+1 FROM recipe_versions WHERE org_id=:org AND recipe_id=:id"
+            ),
+            {"org": org_id, "id": recipe_id},
+        )
+    )
+    version_id = uuid.uuid7()
+    await db.execute(
+        text("""INSERT INTO recipe_versions(id,org_id,recipe_id,version,name,yield_quantity,yield_unit,active,created_by,effective_at)
+        VALUES(:id,:org,:recipe,:version,:name,:yield,:unit,:active,:actor,clock_timestamp())"""),
+        {
+            "id": version_id,
+            "org": org_id,
+            "recipe": recipe_id,
+            "version": version,
+            "name": row.name,
+            "yield": row.yield_quantity,
+            "unit": row.yield_unit,
+            "active": row.active,
+            "actor": actor_id,
+        },
+    )
+    await db.execute(
+        text("""INSERT INTO recipe_version_ingredients(org_id,recipe_version_id,item_id,quantity_base,item_name,base_unit)
+        SELECT org_id,:version_id,item_id,quantity_base,item_name,base_unit FROM recipe_ingredients
+        WHERE org_id=:org AND recipe_id=:recipe"""),
+        {"version_id": version_id, "org": org_id, "recipe": recipe_id},
+    )
 
 
 @router.get("/recipes/menu-links")
@@ -1607,6 +1664,17 @@ async def link_menu_recipe(
     )
     if result.first() is None:
         raise not_found("Menu item not found")
+    await db.execute(
+        text("""INSERT INTO menu_recipe_assignments(id,org_id,menu_item_id,recipe_id,created_by,effective_at)
+        VALUES(:id,:org,:menu,:recipe,:actor,clock_timestamp())"""),
+        {
+            "id": uuid.uuid7(),
+            "org": ctx.org_id,
+            "menu": menu_item_id,
+            "recipe": recipe_id,
+            "actor": ctx.user_id,
+        },
+    )
     await audit.record(
         db,
         org_id=ctx.org_id,
