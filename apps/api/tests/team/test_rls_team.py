@@ -13,7 +13,8 @@ from tests.team.conftest import Clock, Connect, Connected, at, import_team
 TABLES = [
     "staff_members", "positions", "employee_positions", "stations", "employee_locations",
     "invitations", "schedules", "shifts", "published_shifts", "notifications",
-    "availability_sets", "availability_blocks", "time_off_requests",
+    "availability_sets", "availability_blocks", "time_off_requests", "shift_coverage_requests",
+    "shift_trade_requests", "sous_schedule_proposals",
 ]  # fmt: skip
 
 
@@ -47,10 +48,22 @@ async def two(connect: Connect, clock: Clock) -> tuple[Connected, Connected]:
             headers=c.headers,
         )
         assert r.status_code == 201, r.text
+        next_day = monday + date.resolution
+        r = await c.client.post(
+            "/v1/team/schedule/shifts",
+            params={"location_id": str(c.location_id), "week_start": monday.isoformat()},
+            json={
+                "position_id": pos,
+                "starts_at": at(next_day, 9),
+                "ends_at": at(next_day, 15),
+            },
+            headers=c.headers,
+        )
+        assert r.status_code == 201, r.text
         r = await c.client.post(
             "/v1/team/schedule/publish",
             params={"location_id": str(c.location_id), "week_start": monday.isoformat()},
-            json={"expected_version": 1, "acknowledge_conflicts": True},
+            json={"expected_version": 2, "acknowledge_conflicts": True},
             headers=c.headers,
         )
         assert r.status_code == 200, r.text
@@ -63,7 +76,65 @@ async def two(connect: Connect, clock: Clock) -> tuple[Connected, Connected]:
                 {"i": uuid.uuid4(), "o": c.org_id, "u": c.user_id},
             )
             emp = await db.scalar(text("SELECT id FROM staff_members LIMIT 1"))
+            employees = list(
+                await db.scalars(text("SELECT id FROM staff_members ORDER BY id LIMIT 2"))
+            )
             p = {"o": c.org_id, "u": c.user_id, "e": emp, "s": uuid.uuid4()}
+            published = list(
+                await db.execute(
+                    text(
+                        "SELECT id, schedule_id, location_id FROM published_shifts ORDER BY id LIMIT 2"
+                    )
+                )
+            )
+            assert len(published) == 2 and len(employees) == 2
+            await db.execute(
+                text(
+                    "INSERT INTO shift_coverage_requests "
+                    "(id, org_id, location_id, schedule_id, published_shift_id, employee_id) "
+                    "VALUES (:id, :o, :l, :s, :shift, :e)"
+                ),
+                {
+                    "id": uuid.uuid4(),
+                    "o": c.org_id,
+                    "l": published[0].location_id,
+                    "s": published[0].schedule_id,
+                    "shift": published[0].id,
+                    "e": emp,
+                },
+            )
+            await db.execute(
+                text(
+                    "INSERT INTO shift_trade_requests "
+                    "(id, org_id, location_id, schedule_id, offered_shift_id, requested_shift_id, "
+                    "requester_employee_id, recipient_employee_id) "
+                    "VALUES (:id, :o, :l, :s, :offered, :requested, :requester, :recipient)"
+                ),
+                {
+                    "id": uuid.uuid4(),
+                    "o": c.org_id,
+                    "l": published[0].location_id,
+                    "s": published[0].schedule_id,
+                    "offered": published[0].id,
+                    "requested": published[1].id,
+                    "requester": employees[0],
+                    "recipient": employees[1],
+                },
+            )
+            await db.execute(
+                text(
+                    "INSERT INTO sous_schedule_proposals "
+                    "(id, org_id, location_id, schedule_id, created_by, expected_version, payload, expires_at) "
+                    "VALUES (:id, :o, :l, :s, :u, 0, '{}'::jsonb, now() + interval '1 hour')"
+                ),
+                {
+                    "id": uuid.uuid4(),
+                    "o": c.org_id,
+                    "l": published[0].location_id,
+                    "s": published[0].schedule_id,
+                    "u": c.user_id,
+                },
+            )
             await db.execute(
                 text(
                     "INSERT INTO time_off_requests (id, org_id, employee_id, starts_on, ends_on, "

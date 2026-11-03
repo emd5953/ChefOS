@@ -24,12 +24,14 @@ INTEGRATION_RLS_TABLES = {
     "item_storage_assignments", "inventory_pars", "inventory_levels",
     "count_sessions", "count_lines", "stock_movements", "purchase_orders",
     "purchase_order_lines", "receipts", "receipt_lines", "recipes", "recipe_ingredients",
+    "food_cost_baselines", "recipe_versions", "recipe_version_ingredients", "menu_recipe_assignments",
 }  # fmt: skip
 # Team tables (behavior is covered in tests/team/test_rls_team.py).
 TEAM_RLS_TABLES = {
     "positions", "employee_positions", "stations", "employee_locations", "invitations",
     "schedules", "shifts", "published_shifts", "notifications", "availability_sets",
-    "availability_blocks", "time_off_requests",
+    "availability_blocks", "time_off_requests", "shift_coverage_requests", "shift_trade_requests",
+    "sous_schedule_proposals",
 }  # fmt: skip
 # Private conversation behavior is covered in tests/sous/test_conversations.py.
 SOUS_RLS_TABLES = {"sous_conversations", "sous_turns"}
