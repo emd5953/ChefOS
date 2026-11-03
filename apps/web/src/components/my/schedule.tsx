@@ -1,10 +1,11 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarDays, MapPin, WifiOff } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, ErrorState } from "@/components/ui/states";
 import { api, isApiError } from "@/lib/api";
@@ -14,7 +15,7 @@ import { addDays, mondayOf, todayIn } from "@/lib/dates";
 import { formatClock, formatDate, formatDateTime, formatShiftRange, formatWeekday } from "@/lib/format";
 import { loadMyWeek, saveMyWeek } from "@/lib/offline";
 import { keys } from "@/lib/queries";
-import type { MyWeek, TeamShift } from "@/lib/types";
+import type { MyWeek, OpenShift as OpenShiftType, TeamShift } from "@/lib/types";
 
 /** True while the browser reports no connection. */
 export function useOnline(): boolean {
@@ -45,6 +46,7 @@ function useWeekParam(): [string, (w: string) => void, string] {
 
 export function MySchedule() {
   const { user } = useSession();
+  const queryClient = useQueryClient();
   const [week, setWeek, thisWeek] = useWeekParam();
   const online = useOnline();
   const q = useQuery({
@@ -61,6 +63,23 @@ export function MySchedule() {
   const unreachable = !online || (isApiError(q.error) && q.error.code === "unavailable");
   const cached = useMemo(() => (unreachable ? loadMyWeek(user.id, week) : null), [unreachable, user.id, week]);
   const data = q.data && !unreachable ? q.data : (cached?.data ?? q.data);
+  const openShifts = useQuery({
+    queryKey: ["me", "open-shifts"],
+    queryFn: async () => (await api<{ data: OpenShiftType[] }>("/v1/me/open-shifts")).data,
+    enabled: online,
+  });
+  const claim = useMutation({
+    mutationFn: (shiftId: string) => api("/v1/me/shift-coverage-requests", {
+      method: "POST", body: { published_shift_id: shiftId },
+    }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["me", "open-shifts"] });
+    },
+  });
+  const cancelClaim = useMutation({
+    mutationFn: (requestId: string) => api(`/v1/me/shift-coverage-requests/${requestId}/cancel`, { method: "POST" }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["me", "open-shifts"] }),
+  });
 
   const weeks = [
     { id: thisWeek, label: "This week" },
@@ -92,6 +111,35 @@ export function MySchedule() {
       <p className="mt-2 text-center text-xs text-foreground/45">
         {formatDate(week)} – {formatDate(addDays(week, 6))}
       </p>
+
+      {online && openShifts.data && openShifts.data.length > 0 && (
+        <section aria-labelledby="open-shifts-heading" className="mt-5 space-y-2">
+          <h2 id="open-shifts-heading" className="text-[17px] font-semibold tracking-[-0.03em]">Open shifts</h2>
+          {openShifts.data.map((shift) => (
+            <Card key={shift.id} className="flex items-center gap-3 p-4">
+              <span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: shift.position_color }} aria-hidden />
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold">{formatWeekday(shift.business_date)}, {formatDate(shift.business_date)}</p>
+                <p className="text-sm text-foreground/60">{formatShiftRange(shift.starts_at, shift.ends_at, shift.timezone)} · {shift.position_name}</p>
+                <p className="text-xs text-foreground/45">{shift.location_name}{shift.station_name ? ` · ${shift.station_name}` : ""}</p>
+                {shift.request_status === "pending" && <p className="mt-1 text-xs font-medium text-accent">Request sent · awaiting manager</p>}
+                {shift.request_status === "denied" && <p className="mt-1 text-xs text-foreground/50">Your request was declined</p>}
+              </div>
+              {shift.request_status === "pending" ? (
+                <Button size="sm" variant="ghost" loading={cancelClaim.isPending} onClick={() => cancelClaim.mutate(shift.request_id ?? "")}>
+                  Cancel
+                </Button>
+              ) : (
+                <Button size="sm" variant="outline" loading={claim.isPending} onClick={() => claim.mutate(shift.id)}>
+                  Request
+                </Button>
+              )}
+            </Card>
+          ))}
+          {claim.isError && <p role="alert" className="text-sm text-destructive">{claim.error instanceof Error ? claim.error.message : "Could not send request."}</p>}
+          {cancelClaim.isError && <p role="alert" className="text-sm text-destructive">{cancelClaim.error instanceof Error ? cancelClaim.error.message : "Could not cancel request."}</p>}
+        </section>
+      )}
 
       {unreachable && (
         <p role="status" className="mt-4 flex items-center gap-2 rounded-xl bg-warning/10 px-3.5 py-2.5 text-[13px] text-warning">

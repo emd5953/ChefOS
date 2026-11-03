@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarOff, WifiOff } from "lucide-react";
 import { useState } from "react";
 import { Badge, type Tone } from "@/components/ui/badge";
@@ -13,9 +13,9 @@ import { useToast } from "@/components/ui/toast";
 import { api, errorMessage, isApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { todayIn } from "@/lib/dates";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatShiftRange, formatWeekday } from "@/lib/format";
 import { keys, useMyAvailability, useMyTimeOff } from "@/lib/queries";
-import type { AvailabilityBlock, AvailabilitySet, TimeOff, TimeOffIn } from "@/lib/types";
+import type { AvailabilityBlock, AvailabilitySet, MyWeek, ShiftTrade, TimeOff, TimeOffIn } from "@/lib/types";
 import { useOnline } from "./schedule";
 
 export const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -54,8 +54,112 @@ export function MyRequests() {
         </p>
       )}
       <TimeOffSection disabled={!online} />
+      <ShiftTradesSection disabled={!online} />
       <AvailabilitySection disabled={!online} />
     </>
+  );
+}
+
+function ShiftTradesSection({ disabled }: { disabled: boolean }) {
+  const qc = useQueryClient();
+  const week = useQuery({
+    queryKey: ["me", "week", "trade-picker"],
+    queryFn: () => api<MyWeek>("/v1/me/week"),
+    enabled: !disabled,
+  });
+  const trades = useQuery({
+    queryKey: ["me", "shift-trades"],
+    queryFn: async () => (await api<{ data: ShiftTrade[] }>("/v1/me/shift-trades")).data,
+    enabled: !disabled,
+  });
+  const [offeredId, setOfferedId] = useState("");
+  const [requestedId, setRequestedId] = useState("");
+  const ownShifts = week.data?.my_shifts ?? [];
+  const offered = ownShifts.find((shift) => shift.id === offeredId) ?? ownShifts[0];
+  const teamShifts = (week.data?.team_shifts ?? []).filter((shift) => shift.location_id === offered?.location_id);
+  const requested = teamShifts.find((shift) => shift.id === requestedId) ?? teamShifts[0];
+  const create = useMutation({
+    mutationFn: () => api<ShiftTrade>("/v1/me/shift-trades", {
+      method: "POST", body: { offered_shift_id: offered?.id, requested_shift_id: requested?.id },
+    }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["me", "shift-trades"] });
+      toast("Trade request sent. Your coworker must accept before a manager can review it.", "success");
+      setOfferedId("");
+      setRequestedId("");
+    },
+    onError: (e) => toast(errorMessage(e), "error"),
+  });
+  const respond = useMutation({
+    mutationFn: ({ id, decision }: { id: string; decision: "accept" | "decline" }) =>
+      api<ShiftTrade>(`/v1/me/shift-trades/${id}/respond`, { method: "POST", body: { decision } }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["me", "shift-trades"] });
+      await qc.invalidateQueries({ queryKey: ["me", "week"] });
+    },
+    onError: (e) => toast(errorMessage(e), "error"),
+  });
+  const cancelTrade = useMutation({
+    mutationFn: (id: string) => api<ShiftTrade>(`/v1/me/shift-trades/${id}/cancel`, { method: "POST" }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["me", "shift-trades"] }),
+    onError: (e) => toast(errorMessage(e), "error"),
+  });
+  const toast = useToast();
+  return (
+    <section className="mt-8" aria-labelledby="shift-trades-heading">
+      <h2 id="shift-trades-heading" className="text-[17px] font-semibold tracking-[-0.03em]">Shift trades</h2>
+      <p className="mt-1 text-[13px] text-foreground/55">Both employees must agree, then a manager approves and publishes the swap.</p>
+      {week.isPending || trades.isPending ? (
+        <Skeleton className="mt-3 h-20 w-full rounded-card" />
+      ) : week.isError || trades.isError ? (
+        <Card className="mt-3"><ErrorState error={week.error ?? trades.error} onRetry={() => { void week.refetch(); void trades.refetch(); }} retrying={week.isFetching || trades.isFetching} /></Card>
+      ) : (
+        <>
+          {offered && teamShifts.length > 0 && (
+            <Card className="mt-3 space-y-3 p-4">
+              <Field label="Your shift">
+                {(p) => <Select {...p} value={offered.id} onChange={(e) => { setOfferedId(e.target.value); setRequestedId(""); }}>
+                  {ownShifts.map((s) => <option key={s.id} value={s.id}>{formatWeekday(s.business_date)} {formatDate(s.business_date)} · {formatShiftRange(s.starts_at, s.ends_at, week.data?.locations.find((l) => l.id === s.location_id)?.timezone ?? "UTC")}</option>)}
+                </Select>}
+              </Field>
+              <Field label="Coworker's shift">
+                {(p) => <Select {...p} value={requested?.id ?? ""} onChange={(e) => setRequestedId(e.target.value)}>
+                  {teamShifts.map((s) => <option key={s.id} value={s.id}>{s.employee_name} · {formatWeekday(s.business_date)} {formatDate(s.business_date)} · {formatShiftRange(s.starts_at, s.ends_at, week.data?.locations.find((l) => l.id === s.location_id)?.timezone ?? "UTC")}</option>)}
+                </Select>}
+              </Field>
+              <div className="flex justify-end"><Button size="sm" loading={create.isPending} disabled={disabled || !requested} onClick={() => create.mutate()}>Propose trade</Button></div>
+            </Card>
+          )}
+          {ownShifts.length > 0 && teamShifts.length === 0 && <p className="mt-2 text-xs text-foreground/50">No coworker shifts are available to trade at this location this week.</p>}
+          {trades.data.length > 0 ? (
+            <ul className="mt-3 space-y-2">
+              {trades.data.map((trade) => (
+                <li key={trade.id}>
+                  <Card className="p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold">{trade.my_role === "requester" ? `You ↔ ${trade.recipient_name}` : `${trade.requester_name} ↔ You`}</p>
+                        <p className="mt-1 text-xs text-foreground/60">{trade.location_name}: {formatWeekday(trade.offered_shift.business_date)} {formatShiftRange(trade.offered_shift.starts_at, trade.offered_shift.ends_at, trade.timezone)} ↔ {formatWeekday(trade.requested_shift.business_date)} {formatShiftRange(trade.requested_shift.starts_at, trade.requested_shift.ends_at, trade.timezone)}</p>
+                        <StatusBadge status={trade.status === "pending_recipient" && trade.my_role === "requester" ? "pending" : trade.status === "pending_manager" ? "pending" : trade.status} />
+                        {trade.status === "approved" && <p className="mt-1 text-xs text-foreground/55">Approved in the draft; it takes effect after the schedule is published.</p>}
+                        {trade.decision_note && <p className="mt-1 text-xs text-foreground/55">{trade.decision_note}</p>}
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                        {trade.status === "pending_recipient" && trade.my_role === "recipient" && <>
+                          <Button size="sm" variant="outline" loading={respond.isPending} onClick={() => respond.mutate({ id: trade.id, decision: "decline" })}>Decline</Button>
+                          <Button size="sm" loading={respond.isPending} onClick={() => respond.mutate({ id: trade.id, decision: "accept" })}>Accept</Button>
+                        </>}
+                        {trade.my_role === "requester" && ["pending_recipient", "pending_manager"].includes(trade.status) && <Button size="sm" variant="ghost" loading={cancelTrade.isPending} onClick={() => cancelTrade.mutate(trade.id)}>Cancel</Button>}
+                      </div>
+                    </div>
+                  </Card>
+                </li>
+              ))}
+            </ul>
+          ) : !offered ? <p className="mt-2 text-xs text-foreground/50">You need a published shift before you can propose a trade.</p> : null}
+        </>
+      )}
+    </section>
   );
 }
 

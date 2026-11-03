@@ -239,6 +239,29 @@ export type SousAnswer = {
   prompt_version: string;
   request_id: string;
   mode: "model" | "fallback";
+  proposals: SousScheduleProposal[];
+};
+
+export type SousScheduleProposal = {
+  id: string;
+  location_id: string;
+  schedule_id: string;
+  week_start: string;
+  expected_version: number;
+  payload: {
+    employee_id: string | null;
+    position_id: string;
+    station_id: string | null;
+    starts_at: string;
+    ends_at: string;
+    break_minutes: number;
+    notes: string;
+  };
+  position_name: string;
+  employee_name: string | null;
+  status: "pending" | "approved" | "denied" | "expired" | "stale";
+  expires_at: string;
+  created_at: string;
 };
 
 export type SousStatusEvent = { label: string };
@@ -537,6 +560,7 @@ export type MyShift = {
   notes: string;
 };
 export type TeamShift = {
+  id: string;
   location_id: string;
   business_date: string;
   starts_at: string;
@@ -552,6 +576,21 @@ export type MyWeek = {
   locations: Array<{ id: string; name: string; timezone: string }>;
   my_shifts: MyShift[];
   team_shifts: TeamShift[];
+};
+export type OpenShift = {
+  id: string;
+  location_id: string;
+  location_name: string;
+  timezone: string;
+  business_date: string;
+  starts_at: string;
+  ends_at: string;
+  break_minutes: number;
+  position_name: string;
+  position_color: string;
+  station_name: string | null;
+  request_id: string | null;
+  request_status: "pending" | "approved" | "denied" | "cancelled" | null;
 };
 
 // ---- Availability and time off ----
@@ -609,6 +648,45 @@ export type TimeOffIn = {
   reason?: string;
 };
 export type RequestsInbox = { time_off: TimeOff[]; availability: AvailabilitySet[] };
+export type ShiftCoverageRequest = {
+  id: string;
+  location_id: string;
+  published_shift_id: string;
+  employee_id: string;
+  employee_name: string;
+  business_date: string;
+  starts_at: string;
+  ends_at: string;
+  position_name: string;
+  status: "pending" | "approved" | "denied" | "cancelled";
+  created_at: string;
+  decision_note: string | null;
+};
+export type ShiftTradeShift = {
+  id: string;
+  business_date: string;
+  starts_at: string;
+  ends_at: string;
+  position_name: string;
+};
+export type ShiftTrade = {
+  id: string;
+  location_id: string;
+  location_name: string;
+  timezone: string;
+  schedule_id: string;
+  status: "pending_recipient" | "pending_manager" | "approved" | "denied" | "cancelled";
+  my_role: "requester" | "recipient" | "manager";
+  requester_employee_id: string;
+  requester_name: string;
+  recipient_employee_id: string;
+  recipient_name: string;
+  offered_shift: ShiftTradeShift;
+  requested_shift: ShiftTradeShift;
+  created_at: string;
+  decided_at: string | null;
+  decision_note: string | null;
+};
 
 // ---- Attendance (/v1/team/attendance) ----
 export type AttendanceStatus = "upcoming" | "awaiting_data" | "on_time" | "late" | "missed" | "in_progress";

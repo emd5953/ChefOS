@@ -287,6 +287,7 @@ async def conflicts_for(db: AsyncSession, ctx: ConflictContext) -> list[Conflict
 
 # Later milestones add conflict sources (time off, availability) here.
 CONFLICT_HOOKS: list[Any] = []
+PUBLISH_REMOVE_HOOKS: list[Any] = []
 
 
 # ---------------------------------------------------------------- read
@@ -883,22 +884,39 @@ async def publish(
 
     now = _now()
     version = (sched.published_version or 0) + 1
-    await db.execute(delete(PublishedShift).where(PublishedShift.schedule_id == sched.id))
-    if shifts:
-        await db.execute(
-            pg_insert(PublishedShift).values(
-                [
-                    {
-                        **{c: getattr(s, c) for c in PUBLISHED_COLUMNS},
-                        "published_version": version,
-                    }
-                    for s in shifts
-                ]
-            )
+    old_snapshot = [
+        PublishedShift(
+            **{column: getattr(row, column) for column in PUBLISHED_COLUMNS},
+            published_version=row.published_version,
         )
+        for row in old
+    ]
+    old_by_id = {s.id: s for s in old}
+    new_ids = {s.id for s in shifts}
+    # Keep stable published rows in place. Coverage/trade requests reference them, and deleting
+    # every row on every publish would cascade away requests even when the shift still exists.
+    for prior in old:
+        if prior.id not in new_ids:
+            for hook in PUBLISH_REMOVE_HOOKS:
+                await hook(db, scope, prior)
+            await db.delete(prior)
+    for draft in shifts:
+        existing_published = old_by_id.get(draft.id)
+        if existing_published is None:
+            db.add(
+                PublishedShift(
+                    **{c: getattr(draft, c) for c in PUBLISHED_COLUMNS},
+                    published_version=version,
+                )
+            )
+            continue
+        for column in PUBLISHED_COLUMNS:
+            setattr(existing_published, column, getattr(draft, column))
+        existing_published.published_version = version
+    await db.flush()
     # daily_labor.scheduled_hours follows the published snapshot.
     await refresh_scheduled_hours(db, scope.org_id, [(loc.id, d) for d in week_dates(week_start)])
-    diffs = diff_by_employee(old, shifts, now)
+    diffs = diff_by_employee(old_snapshot, shifts, now)
     people = await _rates(db, set(diffs))
     notified = 0
     kind = "schedule_published" if first else "schedule_changed"

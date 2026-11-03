@@ -402,3 +402,76 @@ class TimeOffRequest(Base):
     decided_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), default=None)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     decision_note: Mapped[str | None] = mapped_column(String, default=None)
+
+
+class ShiftCoverageRequest(Base):
+    """Employee request to claim a published open shift. Approval updates only the draft."""
+
+    __tablename__ = "shift_coverage_requests"
+    __table_args__ = (
+        CheckConstraint("status IN ('pending', 'approved', 'denied', 'cancelled')", name="status"),
+        Index("ix_shift_coverage_requests_location_status", "location_id", "status"),
+        Index("ix_shift_coverage_requests_employee_status", "employee_id", "status"),
+        Index(
+            "uq_shift_coverage_requests_pending_shift",
+            "published_shift_id",
+            "employee_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=new_id)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
+    location_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("locations.id"))
+    schedule_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("schedules.id", ondelete="CASCADE"))
+    published_shift_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("published_shifts.id", ondelete="CASCADE")
+    )
+    employee_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("staff_members.id"))
+    status: Mapped[str] = mapped_column(String, default="pending", server_default="pending")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, server_default=_NOW
+    )
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), default=None)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    decision_note: Mapped[str | None] = mapped_column(String, default=None)
+
+
+class ShiftTradeRequest(Base):
+    """Employee-proposed swap of two published shifts; approval edits only the draft."""
+
+    __tablename__ = "shift_trade_requests"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending_recipient', 'pending_manager', 'approved', 'denied', 'cancelled')",
+            name="status",
+        ),
+        CheckConstraint("offered_shift_id <> requested_shift_id", name="distinct_shifts"),
+        Index("ix_shift_trade_requests_location_status", "location_id", "status"),
+        Index("ix_shift_trade_requests_requester_status", "requester_employee_id", "status"),
+        Index("ix_shift_trade_requests_recipient_status", "recipient_employee_id", "status"),
+        Index("ix_shift_trade_requests_created_at", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=new_id)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
+    location_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("locations.id"))
+    schedule_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("schedules.id", ondelete="CASCADE"))
+    offered_shift_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("published_shifts.id", ondelete="CASCADE")
+    )
+    requested_shift_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("published_shifts.id", ondelete="CASCADE")
+    )
+    requester_employee_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("staff_members.id"))
+    recipient_employee_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("staff_members.id"))
+    status: Mapped[str] = mapped_column(
+        String, default="pending_recipient", server_default="pending_recipient"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, server_default=_NOW
+    )
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), default=None)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    decision_note: Mapped[str | None] = mapped_column(String, default=None)

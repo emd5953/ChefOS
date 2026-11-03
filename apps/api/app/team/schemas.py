@@ -440,6 +440,7 @@ class MyShift(BaseModel):
 class TeamShift(BaseModel):
     """A teammate's published shift: name, position, and times only."""
 
+    id: uuid.UUID
     location_id: uuid.UUID
     business_date: date
     starts_at: datetime
@@ -456,6 +457,95 @@ class MyWeek(BaseModel):
     locations: list[MyLocation]
     my_shifts: list[MyShift]
     team_shifts: list[TeamShift]
+
+
+class OpenShift(BaseModel):
+    id: uuid.UUID
+    location_id: uuid.UUID
+    location_name: str
+    timezone: str
+    business_date: date
+    starts_at: datetime
+    ends_at: datetime
+    break_minutes: int
+    position_name: str
+    position_color: str
+    station_name: str | None
+    request_id: uuid.UUID | None
+    request_status: Literal["pending", "approved", "denied", "cancelled"] | None
+
+
+class OpenShiftList(BaseModel):
+    data: list[OpenShift]
+
+
+class ShiftCoverageRequestIn(BaseModel):
+    published_shift_id: uuid.UUID
+
+
+class ShiftCoverageRequestOut(BaseModel):
+    id: uuid.UUID
+    location_id: uuid.UUID
+    published_shift_id: uuid.UUID
+    employee_id: uuid.UUID
+    employee_name: str
+    business_date: date
+    starts_at: datetime
+    ends_at: datetime
+    position_name: str
+    status: Literal["pending", "approved", "denied", "cancelled"]
+    created_at: datetime
+    decision_note: str | None
+
+
+class ShiftCoverageRequestList(BaseModel):
+    data: list[ShiftCoverageRequestOut]
+
+
+class ShiftTradeCreate(BaseModel):
+    offered_shift_id: uuid.UUID
+    requested_shift_id: uuid.UUID
+
+
+class ShiftTradeDecision(BaseModel):
+    decision: Literal["accept", "decline"]
+    note: Annotated[str, Field(max_length=500)] | None = None
+
+
+class ShiftTradeManagerDecision(BaseModel):
+    decision: Literal["approve", "deny"]
+    note: Annotated[str, Field(max_length=500)] | None = None
+
+
+class ShiftTradeShift(BaseModel):
+    id: uuid.UUID
+    business_date: date
+    starts_at: datetime
+    ends_at: datetime
+    position_name: str
+
+
+class ShiftTradeOut(BaseModel):
+    id: uuid.UUID
+    location_id: uuid.UUID
+    location_name: str
+    timezone: str
+    schedule_id: uuid.UUID
+    status: Literal["pending_recipient", "pending_manager", "approved", "denied", "cancelled"]
+    my_role: Literal["requester", "recipient", "manager"]
+    requester_employee_id: uuid.UUID
+    requester_name: str
+    recipient_employee_id: uuid.UUID
+    recipient_name: str
+    offered_shift: ShiftTradeShift
+    requested_shift: ShiftTradeShift
+    created_at: datetime
+    decided_at: datetime | None
+    decision_note: str | None
+
+
+class ShiftTradeList(BaseModel):
+    data: list[ShiftTradeOut]
 
 
 # ---------------------------------------------------------------- availability and time off
@@ -581,6 +671,11 @@ class RequestsOut(BaseModel):
 
 class Decision(BaseModel):
     decision: Literal["approve", "deny", "reject"]
+    note: Reason | None = None
+
+
+class ShiftCoverageDecision(BaseModel):
+    decision: Literal["approve", "deny"]
     note: Reason | None = None
 
 

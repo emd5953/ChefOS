@@ -129,6 +129,7 @@ async def my_week(
         elif shift.employee_id is not None and name is not None:
             team.append(
                 TeamShift(
+                    id=shift.id,
                     location_id=shift.location_id,
                     business_date=shift.business_date,
                     starts_at=shift.starts_at,

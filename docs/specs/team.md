@@ -1,6 +1,6 @@
 # Team (Phase 3)
 
-**Status:** Built (T1–T5) · see Implementation notes · **Last updated:** 2026-10-20
+**Status:** Phase 3 built (T1–T5); TEAM-5 claims and trades built separately · **Last updated:** 2026-11-02
 **Related:** [PRD](../prd.md) (TEAM-1 to TEAM-4, MOB-1), [Roadmap](../roadmap.md), [Architecture](../architecture.md), [Integration layer](integration-layer.md), [ADR 0002](../adr/0002-production-stack.md)
 
 ## Problem
@@ -18,7 +18,7 @@ Square team members and timecards already flow into `staff_members`, `timecards`
 
 ## Non-goals
 
-- TEAM-5 shift trades and open shifts, TEAM-7 tasks and checklists.
+- TEAM-5 is a follow-on feature documented in [shift coverage spec](team-shift-coverage.md); open-shift claims and trades are built. TEAM-7 tasks and checklists remain deferred.
 - MOB-2 manager mobile and MOB-3 inventory mobile. Manager screens are responsive but not phone-optimized.
 - Paid or external delivery: email, SMS, native push. Invitation links are copied and shared by hand.
 - Overtime, labor-law rules, salaried pay, tip pooling, labor targets, auto-scheduling, forecast overrides.
@@ -231,6 +231,7 @@ Decisions made while building, where the spec above was silent or ambiguous. The
 - **Requests inbox** has `status=pending|history`. History is decided requests (and approved/rejected availability), newest first.
 - **Merge** also repoints shifts, published shifts, availability sets, and time-off requests.
 - **Web build in a git worktree.** Turbopack can't resolve `next` through a symlinked `node_modules`; use a real install in the worktree.
+- **TEAM-5 follow-on.** Open-shift claims and two-party trades use separate request records and preserve the draft/published schedule boundary. See [TEAM-5 status and contract](team-shift-coverage.md).
 
 ## Risks / open questions
 

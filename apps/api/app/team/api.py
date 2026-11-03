@@ -13,7 +13,7 @@ from app.identity.schemas import OrgOut, SessionOut, UserOut
 from app.security.sessions import AuthDep, OrgSession, StaffDep, set_session_cookie
 
 # `requests` also registers the time-off and availability conflict checks with the builder.
-from app.team import attendance, invitations, me, notify, requests, schedule, service
+from app.team import attendance, invitations, me, notify, requests, schedule, service, trades
 from app.team.schemas import (
     AttendanceOut,
     AvailabilityIn,
@@ -36,6 +36,7 @@ from app.team.schemas import (
     MyAvailability,
     MyWeek,
     NotificationList,
+    OpenShiftList,
     PositionCreate,
     PositionList,
     PositionOut,
@@ -44,9 +45,18 @@ from app.team.schemas import (
     PublishRequest,
     RequestsOut,
     ScheduleOut,
+    ShiftCoverageDecision,
+    ShiftCoverageRequestIn,
+    ShiftCoverageRequestList,
+    ShiftCoverageRequestOut,
     ShiftIn,
     ShiftOut,
     ShiftPatch,
+    ShiftTradeCreate,
+    ShiftTradeDecision,
+    ShiftTradeList,
+    ShiftTradeManagerDecision,
+    ShiftTradeOut,
     StationCreate,
     StationList,
     StationOut,
@@ -239,6 +249,40 @@ async def list_requests(
     return await requests.list_requests(db, await service.scope_for(ctx), location_id, status)
 
 
+@team.get("/shift-coverage-requests", response_model=ShiftCoverageRequestList)
+async def list_shift_coverage_requests(
+    ctx: StaffDep, db: OrgSession, location_id: LocationId
+) -> ShiftCoverageRequestList:
+    return ShiftCoverageRequestList(
+        data=await requests.list_coverage_requests(db, await service.scope_for(ctx), location_id)
+    )
+
+
+@team.post("/shift-coverage-requests/{id}/decide", response_model=ShiftCoverageRequestOut)
+async def decide_shift_coverage_request(
+    id: uuid.UUID, body: ShiftCoverageDecision, ctx: StaffDep, db: OrgSession
+) -> ShiftCoverageRequestOut:
+    return await requests.decide_coverage_request(
+        db, await service.scope_for(ctx), id, body.decision, body.note
+    )
+
+
+@team.get("/shift-trades", response_model=ShiftTradeList)
+async def list_shift_trades(
+    ctx: StaffDep, db: OrgSession, location_id: LocationId
+) -> ShiftTradeList:
+    return ShiftTradeList(
+        data=await trades.list_for_manager(db, await service.scope_for(ctx), location_id)
+    )
+
+
+@team.post("/shift-trades/{id}/decide", response_model=ShiftTradeOut)
+async def decide_shift_trade(
+    id: uuid.UUID, body: ShiftTradeManagerDecision, ctx: StaffDep, db: OrgSession
+) -> ShiftTradeOut:
+    return await trades.decide(db, await service.scope_for(ctx), id, body.decision, body.note)
+
+
 @team.post("/time-off/{id}/decide", response_model=TimeOffOut)
 async def decide_time_off(
     id: uuid.UUID, body: Decision, ctx: StaffDep, db: OrgSession
@@ -314,6 +358,52 @@ async def accept_invitation(
 @mine.get("/me/week", response_model=MyWeek)
 async def my_week(ctx: AuthDep, db: OrgSession, week_start: date | None = None) -> MyWeek:
     return await me.my_week(db, ctx.org_id, ctx.user_id, week_start)
+
+
+@mine.get("/me/open-shifts", response_model=OpenShiftList)
+async def list_open_shifts(ctx: AuthDep, db: OrgSession) -> OpenShiftList:
+    return OpenShiftList(data=await requests.open_shifts(db, ctx.org_id, ctx.user_id))
+
+
+@mine.post("/me/shift-coverage-requests", status_code=201, response_model=ShiftCoverageRequestOut)
+async def create_shift_coverage_request(
+    body: ShiftCoverageRequestIn, ctx: AuthDep, db: OrgSession
+) -> ShiftCoverageRequestOut:
+    return await requests.request_open_shift(db, ctx.org_id, ctx.user_id, body.published_shift_id)
+
+
+@mine.post(
+    "/me/shift-coverage-requests/{id}/cancel",
+    response_model=ShiftCoverageRequestOut,
+)
+async def cancel_shift_coverage_request(
+    id: uuid.UUID, ctx: AuthDep, db: OrgSession
+) -> ShiftCoverageRequestOut:
+    return await requests.cancel_coverage_request(db, ctx.org_id, ctx.user_id, id)
+
+
+@mine.get("/me/shift-trades", response_model=ShiftTradeList)
+async def list_my_shift_trades(ctx: AuthDep, db: OrgSession) -> ShiftTradeList:
+    return ShiftTradeList(data=await trades.list_for_employee(db, ctx.org_id, ctx.user_id))
+
+
+@mine.post("/me/shift-trades", status_code=201, response_model=ShiftTradeOut)
+async def create_shift_trade(body: ShiftTradeCreate, ctx: AuthDep, db: OrgSession) -> ShiftTradeOut:
+    return await trades.create(
+        db, ctx.org_id, ctx.user_id, body.offered_shift_id, body.requested_shift_id
+    )
+
+
+@mine.post("/me/shift-trades/{id}/respond", response_model=ShiftTradeOut)
+async def respond_to_shift_trade(
+    id: uuid.UUID, body: ShiftTradeDecision, ctx: AuthDep, db: OrgSession
+) -> ShiftTradeOut:
+    return await trades.respond(db, ctx.org_id, ctx.user_id, id, body.decision, body.note)
+
+
+@mine.post("/me/shift-trades/{id}/cancel", response_model=ShiftTradeOut)
+async def cancel_shift_trade(id: uuid.UUID, ctx: AuthDep, db: OrgSession) -> ShiftTradeOut:
+    return await trades.cancel(db, ctx.org_id, ctx.user_id, id)
 
 
 @mine.get("/me/availability", response_model=MyAvailability)
