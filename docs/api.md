@@ -77,10 +77,10 @@ type Totals       = { net_sales: number; gross_sales: number; discounts: number;
 
 | Method | Path | Body | Response |
 | --- | --- | --- | --- |
-| POST | `/v1/auth/signup` | `{ email, password, display_name, org_name, location_name, timezone }` | `201 { user, org, location, role, csrf_token }` + cookie |
-| POST | `/v1/auth/login` | `{ email, password }` | `200 { user, org, role, csrf_token }` + cookie |
+| POST | `/v1/auth/signup` | `{ email, password, display_name, org_name, location_name, timezone }` | `201 { user, org, location, role, csrf_token, has_employee }` + cookie |
+| POST | `/v1/auth/login` | `{ email, password }` | `200 { user, org, role, csrf_token, has_employee }` + cookie |
 | POST | `/v1/auth/logout` | none | `204`, cookie cleared |
-| GET | `/v1/auth/me` | none | `200 { user, org, role, csrf_token }` or `401` |
+| GET | `/v1/auth/me` | none | `200 { user, org, role, csrf_token, has_employee }` or `401` |
 
 Password minimum is 12 characters. `timezone` is an IANA name.
 

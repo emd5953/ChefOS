@@ -1,5 +1,8 @@
 # Backend module boundaries
 
+**Status:** Implemented (PR #2) · **Last updated:** 2026-11-05
+**Related:** [Architecture](../architecture.md), [API README](../../apps/api/README.md)
+
 ## Problem
 
 `apps/api` is a modular monolith (`app/<module>/{api,models,schemas,service}.py`), but the

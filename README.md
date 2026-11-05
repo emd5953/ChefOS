@@ -19,6 +19,7 @@ Modules: **Team**, **Commerce**, **Inventory**. Shared capabilities: **Integrati
 | External sales push (INT-6) | Built: scoped, expiring API keys (hashed, shown once), idempotent totals ingestion; push freshness lasts 26 hours and reports unsupported streams as not connected |
 | Clock-in alerts (Phase 6, TEAM-6) | Built: late/missed clock-in alerts to managers, attendance view (scheduled vs actual per shift and day, open punches as running time), `daily_labor.scheduled_hours` from published shifts |
 | Team shift coverage (TEAM-5) | Built: employees can claim open shifts or propose trades; coworker and manager approvals update the draft, with publish required before changes take effect ([spec](docs/specs/team-shift-coverage.md)) |
+| Backend module boundaries | Enforced: modules expose a declared `PUBLIC` surface, routes stay thin over service layers, and a test blocks new module cycles ([spec](docs/specs/backend-module-boundaries.md)) |
 | Food cost variance (COM-6) | Built: count-anchored actual vs recipe-theoretical usage with historical recipe mappings, receipt weighted-average valuation, explicit coverage, and manager report ([spec](docs/specs/food-cost-variance.md)) |
 
 ## Run the demo

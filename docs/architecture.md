@@ -45,16 +45,25 @@ flowchart LR
 
 ## Modules
 
-The API is one deployable, organized by module. Modules talk through service interfaces and domain events, not each other's tables.
+The API is one deployable, organized by module. Each module is a package under `apps/api/app/` with `api.py` (routes: auth, role and location checks, request parsing), `service.py` and topic files (logic and queries), `models.py` and `schemas.py`. All modules share one PostgreSQL database and RLS.
+
+Boundaries are enforced by `apps/api/tests/test_boundaries.py` ([spec](specs/backend-module-boundaries.md)):
+
+- **Platform** (`config`, `db`, `errors`, `ids`, `context`, `formatting`, `telemetry`, `business_date`) imports no module code.
+- **Composition roots** (`main`, `cli`, `health`, `models`) wire modules together. Only roots import them.
+- A module reaches another only through the submodules listed in that module's `PUBLIC` tuple (`app/<module>/__init__.py`), and never through its `api` routers.
+- Module cycles fail the test. Four existing two-way links are allowlisted: security ↔ identity, commerce ↔ integrations, team ↔ integrations, integrations ↔ workflows. An allowlisted edge that disappears also fails the test, so the list can only shrink.
 
 | Module | Owns |
 | --- | --- |
-| **identity** | Organizations, locations, users, roles, sessions, API keys |
+| **identity** | Organizations, locations, users, memberships and roles, API keys |
+| **security** | Sessions and CSRF, password policy, login throttling, key provider |
 | **integrations** | Connections, sync state, raw records, identity mapping, freshness ([spec](specs/integration-layer.md)) |
 | **commerce** | Sales orders and lines, menu items, daily sales read models, reports |
-| **team** | Employees, positions, schedules, shifts, availability, time off, trades, timecards, tasks |
-| **inventory** | Items, packs and units, pars, counts, suppliers, purchase orders, receiving, recipes, waste, transfers |
-| **sous** | Assistant orchestration, tool registry, drafts ([spec](specs/sous.md)) |
+| **team** | Employees, positions, invitations, notifications; `scheduling/` (builder, forecast, attendance); `requests/` (availability and time off, open-shift coverage, trades); timecards and tasks |
+| **inventory** | Items, packs and units, pars, counts, suppliers, purchase orders, receiving, recipes, waste, food cost variance, transfers |
+| **sous** | Daily briefing, conversations, schedule proposals; `agent/` (orchestration, model client, prompt, tools, grounding checks) ([spec](specs/sous.md)) |
+| **workflows** | Temporal client, worker, and workflow definitions |
 | **audit** | Append-only audit events |
 
 ## Data flow
