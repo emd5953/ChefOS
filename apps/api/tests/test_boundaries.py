@@ -1,6 +1,6 @@
 """Module boundaries (docs/specs/backend-module-boundaries.md).
 
-Platform modules import no domain code; nothing imports a composition root; a domain reaches
+Platform modules import no domain code; only composition roots import one; a domain reaches
 another domain only through the submodules listed in that domain's `PUBLIC`; and the
 package-level graph stays acyclic once `ALLOWED_BACK_EDGES` is removed.
 """
@@ -43,10 +43,14 @@ def _imports() -> Iterator[tuple[str, str, str, list[str]]]:
     for path in APP_DIR.rglob("*.py"):
         rel = path.relative_to(APP_DIR)
         src = rel.parts[0].removesuffix(".py")
+        package = ["app", *rel.parent.parts]
         for node in ast.walk(ast.parse(path.read_text())):
-            if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-                if node.module.startswith("app."):
-                    yield src, str(rel), node.module, [a.name for a in node.names]
+            if isinstance(node, ast.ImportFrom):
+                # Resolve relative imports (`from ..team import api`) against the file's package.
+                base = package[: len(package) - node.level + 1] if node.level else []
+                module = ".".join([*base, *([node.module] if node.module else [])])
+                if module == "app" or module.startswith("app."):
+                    yield src, str(rel), module, [a.name for a in node.names]
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     if alias.name.startswith("app."):
@@ -54,9 +58,9 @@ def _imports() -> Iterator[tuple[str, str, str, list[str]]]:
 
 
 def _targets(module: str, names: list[str]) -> Iterator[list[str]]:
-    """Each concrete target path below `app`; `from app.x import y` may name a submodule."""
+    """Each concrete target path below `app`; `from app[.x] import y` may name a submodule."""
     parts = module.split(".")[1:]
-    if len(parts) == 1 and names:
+    if len(parts) <= 1 and names:
         for name in names:
             yield [*parts, name]
     else:
@@ -75,18 +79,20 @@ def test_every_app_module_is_classified() -> None:
 
 def test_platform_imports_only_platform() -> None:
     offenders = [
-        f"{file} -> {mod}"
-        for src, file, mod, _ in _imports()
-        if src in PLATFORM and mod.split(".")[1] not in PLATFORM
+        f"{file} -> app.{'.'.join(target)}"
+        for src, file, mod, names in _imports()
+        for target in _targets(mod, names)
+        if src in PLATFORM and target[0] not in PLATFORM
     ]
     assert not offenders, offenders
 
 
-def test_nothing_imports_a_root() -> None:
+def test_only_roots_import_a_root() -> None:
     offenders = [
-        f"{file} -> {mod}"
-        for src, file, mod, _ in _imports()
-        if mod.split(".")[1] in ROOTS and src != mod.split(".")[1]
+        f"{file} -> app.{'.'.join(target)}"
+        for src, file, mod, names in _imports()
+        for target in _targets(mod, names)
+        if target[0] in ROOTS and src not in ROOTS
     ]
     assert not offenders, offenders
 

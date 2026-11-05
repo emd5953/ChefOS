@@ -57,11 +57,11 @@ package `__init__` mid-cycle and fail.
 |---|---|---|
 | platform | `business_date config db errors ids context formatting telemetry` | platform only |
 | domain | `audit security identity commerce integrations inventory sous team workflows` | platform + other domains' public surface |
-| root | `main cli health models` | anything; nothing imports a root |
+| root | `main cli health models` | anything; only roots import a root |
 
 ### Rules
 1. Platform modules import no domain or root module.
-2. No module imports a root module.
+2. Only root modules import a root module.
 3. A domain never imports another domain's `api` module, or `integrations.push` (which is a
    router).
 4. A cross-domain import must target `app.<mod>` or `app.<mod>.<name>…` where `<name>` is in

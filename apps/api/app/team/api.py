@@ -362,7 +362,9 @@ async def accept_invitation(
 # ---------------------------------------------------------------- self-service
 
 
-@mine.get("/auth/me", response_model=SessionOut)
+# Lives here (not identity) because `has_employee` is team knowledge; the operation id and summary
+# keep the generated client names from before the move.
+@mine.get("/auth/me", response_model=SessionOut, operation_id="me_v1_auth_me_get", summary="Me")
 async def session_me(ctx: AuthDep, db: OrgSession) -> SessionOut:
     has_employee = (
         await db.scalar(
