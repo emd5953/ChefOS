@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
-from app.sous import prompt
+from app.sous.agent import prompt
 
 LIMITATION = (
     "The assistant model is unavailable, so this is a fixed-format answer from the same figures."

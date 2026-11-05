@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.integrations.providers.square import business_date
+from app.business_date import business_date
 
 NY = ZoneInfo("America/New_York")
 

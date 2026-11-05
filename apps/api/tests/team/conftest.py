@@ -144,7 +144,7 @@ def at(d: date, h: int, m: int = 0) -> str:
 @pytest.fixture
 def frozen(clock: Clock, monkeypatch: pytest.MonkeyPatch) -> Clock:
     """Schedule reads use the test clock as "now" (forecast and reference windows)."""
-    from app.team import schedule
+    from app.team.scheduling import builder as schedule
 
     monkeypatch.setattr(schedule, "_now", clock)
     return clock

@@ -10,8 +10,8 @@ import pytest
 from app.commerce import service as commerce
 from app.db import scoped_session
 from app.identity.models import Location
-from app.sous import tools
-from app.sous.tools import TOOL_NAMES, ToolResult, run_tool
+from app.sous.agent import tools
+from app.sous.agent.tools import TOOL_NAMES, ToolResult, run_tool
 from tests.integrations.conftest import Clock, Connected
 
 LAST = date(2026, 3, 7)  # the fake clock's business date

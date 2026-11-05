@@ -20,13 +20,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.business_date import business_date, get_zone
 from app.commerce import service
 from app.commerce.models import DailyLabor
 from app.commerce.schemas import FreshnessOut, Totals
 from app.formatting import local_timestamp
 from app.identity.models import Location
 from app.integrations.freshness import FreshnessItem, location_freshness
-from app.integrations.providers.square.business_date import business_date, get_zone
 from app.security.sessions import AuthContext
 from app.sous import proposals as proposal_service
 from app.sous.schemas import (
@@ -42,7 +42,7 @@ from app.sous.schemas import (
     Unit,
 )
 from app.team.models import Position, PublishedShift, Schedule, Shift, StaffMember, Station
-from app.team.schedule import count_changes, label_time, paid_hours
+from app.team.scheduling.builder import count_changes, label_time, paid_hours
 from app.team.schemas import ShiftIn
 
 log = structlog.get_logger()

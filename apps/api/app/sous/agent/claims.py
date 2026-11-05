@@ -10,8 +10,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.sous.agent.tools import ToolResult
 from app.sous.schemas import Kind
-from app.sous.tools import ToolResult
 
 METRICS = {
     "net_sales_usd": "Net sales",

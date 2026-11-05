@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.db import get_engine, purge_expired_sous_conversations, scoped_session
 from app.errors import ProblemError
 from app.sous import conversations, retention
-from app.sous.llm import FakeProvider
+from app.sous.agent.llm import FakeProvider
 from app.sous.models import Conversation, Turn
 from app.sous.schemas import AskIn
 from tests.integrations.conftest import Connect, Connected

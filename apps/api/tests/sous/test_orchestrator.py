@@ -12,11 +12,17 @@ from app.commerce.schemas import FreshnessOut, ItemOut, ItemsOut
 from app.db import scoped_session
 from app.identity.models import Location
 from app.security.sessions import AuthContext
-from app.sous import claims, orchestrator, prompt
-from app.sous.llm import FakeProvider, LLMReply, ToolCall
-from app.sous.orchestrator import MAX_ROUNDS, MAX_TOOL_CALLS, limitations, split_kind, strip_think
+from app.sous.agent import claims, orchestrator, prompt
+from app.sous.agent.llm import FakeProvider, LLMReply, ToolCall
+from app.sous.agent.orchestrator import (
+    MAX_ROUNDS,
+    MAX_TOOL_CALLS,
+    limitations,
+    split_kind,
+    strip_think,
+)
+from app.sous.agent.tools import ToolResult
 from app.sous.schemas import AskIn, HistoryTurn, SousAnswer
-from app.sous.tools import ToolResult
 from tests.integrations.conftest import Clock, Connected
 
 WEEK = {"from": "2026-03-01", "to": "2026-03-07"}

@@ -21,6 +21,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import service as audit
+from app.business_date import business_date, get_zone
 from app.db import lookup_api_key, scoped_session
 from app.errors import ProblemError, forbidden, not_found, validation_error
 from app.identity.models import ApiKey, Location
@@ -32,7 +33,6 @@ from app.integrations.models import (
     IntegrationLocationLink,
     IntegrationStream,
 )
-from app.integrations.providers.square.business_date import business_date, get_zone
 from app.integrations.providers.square.types import RawItem
 from app.integrations.readmodels import Pair, rebuild_daily_sales
 

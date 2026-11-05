@@ -11,9 +11,9 @@ from app.errors import ProblemError, not_found
 from app.identity.models import Location
 from app.security.sessions import AuthContext
 from app.sous.models import ScheduleProposal
-from app.team import schedule as schedule_service
 from app.team import service as team_service
 from app.team.models import Position, PublishedShift, Schedule, Shift, StaffMember, Station
+from app.team.scheduling import builder as schedule_service
 from app.team.schemas import ShiftIn, ShiftPatch
 from app.team.service import Scope
 

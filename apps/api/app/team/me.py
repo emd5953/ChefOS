@@ -7,9 +7,9 @@ from datetime import UTC, date, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.business_date import business_date
 from app.errors import not_found
 from app.identity.models import Location, Organization
-from app.integrations.providers.square.business_date import business_date
 from app.team.models import (
     EmployeeLocation,
     Position,
@@ -18,7 +18,7 @@ from app.team.models import (
     StaffMember,
     Station,
 )
-from app.team.schedule import check_week_start
+from app.team.scheduling.builder import check_week_start
 from app.team.schemas import EmployeeRef, MyLocation, MyShift, MyWeek, TeamShift
 
 

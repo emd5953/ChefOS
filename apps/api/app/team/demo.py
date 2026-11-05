@@ -11,14 +11,16 @@ from datetime import UTC, date, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.business_date import business_date
 from app.db import scoped_session
 from app.errors import ProblemError
 from app.identity.models import Location, User
 from app.integrations.models import ExternalRef, IntegrationLocationLink
 from app.integrations.providers.square import fake_data as fd
-from app.integrations.providers.square.business_date import business_date
-from app.team import attendance, invitations, schedule
+from app.team import invitations
 from app.team.models import Position, Shift, StaffMember
+from app.team.scheduling import attendance
+from app.team.scheduling import builder as schedule
 from app.team.schemas import InvitationCreate, ShiftIn
 from app.team.service import Scope
 

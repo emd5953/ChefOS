@@ -30,7 +30,6 @@ from app.security.sessions import (
     revoke_session,
     set_session_cookie,
 )
-from app.team.models import StaffMember
 
 router = APIRouter(prefix="/v1", tags=["identity"])
 
@@ -75,27 +74,6 @@ async def logout(ctx: AuthDep, db: OrgSession) -> Response:
     response = Response(status_code=204)
     clear_session_cookie(response)
     return response
-
-
-@router.get("/auth/me", response_model=SessionOut)
-async def me(ctx: AuthDep, db: OrgSession) -> SessionOut:
-    has_employee = (
-        await db.scalar(
-            select(StaffMember.id).where(
-                StaffMember.org_id == ctx.org_id,
-                StaffMember.user_id == ctx.user_id,
-                StaffMember.merged_into_id.is_(None),
-            )
-        )
-        is not None
-    )
-    return SessionOut(
-        user=UserOut.model_validate(await service.get_user(db, ctx.user_id)),
-        org=OrgOut.model_validate(await service.get_org(db, ctx.org_id)),
-        role=ctx.role,
-        csrf_token=ctx.csrf_token,
-        has_employee=has_employee,
-    )
 
 
 @router.get("/org", response_model=OrgOut)

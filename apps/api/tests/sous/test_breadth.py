@@ -15,10 +15,10 @@ from app.db import scoped_session
 from app.identity.models import Location
 from app.integrations.models import IntegrationStream
 from app.security.sessions import AuthContext
-from app.sous import orchestrator
-from app.sous.llm import FakeProvider, LLMReply, ToolCall
+from app.sous.agent import orchestrator
+from app.sous.agent.llm import FakeProvider, LLMReply, ToolCall
+from app.sous.agent.tools import ToolResult, run_tool
 from app.sous.schemas import AskIn, SousAnswer
-from app.sous.tools import ToolResult, run_tool
 from app.team.models import Position, PublishedShift, Schedule, Shift, StaffMember
 from tests.integrations.conftest import Clock, Connected
 from tests.sous.test_orchestrator import select_facts

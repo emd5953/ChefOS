@@ -13,8 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.config import get_settings
 from app.main import app
 from app.security import passwords
-from app.sous import llm, prompt
-from app.sous.llm import FakeProvider, LLMProvider, LLMReply, OllamaProvider, ToolCall
+from app.sous.agent import llm, prompt
+from app.sous.agent.llm import FakeProvider, LLMProvider, LLMReply, OllamaProvider, ToolCall
 from tests.conftest import PASSWORD
 from tests.integrations.conftest import Connected
 

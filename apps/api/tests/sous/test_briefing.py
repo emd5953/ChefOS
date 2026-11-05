@@ -15,7 +15,7 @@ from app.db import scoped_session
 from app.identity.models import Location
 from app.integrations.models import IntegrationConnection, IntegrationStream
 from app.sous import service
-from app.sous.llm import LLMProvider, OllamaProvider
+from app.sous.agent.llm import LLMProvider, OllamaProvider
 from tests.integrations.conftest import Clock, Connected
 from tests.team.conftest import at, employee_id, import_team
 

@@ -17,6 +17,7 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.business_date import business_date
 from app.commerce.models import MenuItem, MenuItemVariant
 from app.config import get_settings
 from app.db import lookup_connection_owners, scoped_session
@@ -34,7 +35,6 @@ from app.integrations.models import (
     WebhookEvent,
 )
 from app.integrations.providers import get_connector
-from app.integrations.providers.square.business_date import business_date
 from app.integrations.providers.square.client import SquareError
 from app.integrations.schemas import (
     ConnectionDetailOut,

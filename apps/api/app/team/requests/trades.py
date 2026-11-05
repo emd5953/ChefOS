@@ -11,7 +11,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.audit import service as audit
 from app.errors import ProblemError, not_found, validation_error
 from app.identity.models import Location
-from app.team import me, notify, schedule
+from app.team import me, notify
 from app.team.models import (
     EmployeeLocation,
     EmployeePosition,
@@ -23,6 +23,7 @@ from app.team.models import (
     ShiftTradeRequest,
     StaffMember,
 )
+from app.team.scheduling import builder as schedule
 from app.team.schemas import ShiftTradeOut, ShiftTradeShift
 from app.team.service import Scope, get_location
 

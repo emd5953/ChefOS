@@ -1,6 +1,5 @@
 """Pure-Python Square provider for ChefOS (no FastAPI/SQLAlchemy/Temporal/DB dependency)."""
 
-from app.integrations.providers.square.business_date import business_date
 from app.integrations.providers.square.client import (
     SquareAuthError,
     SquareClient,
@@ -73,7 +72,6 @@ __all__ = [
     "WebhookEvent",
     "WebhookParseError",
     "Window",
-    "business_date",
     "normalize_catalog_object",
     "normalize_order",
     "normalize_team_member",

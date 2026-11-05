@@ -5,9 +5,9 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from app.integrations.providers.square.business_date import business_date
+from app.business_date import business_date
 from app.team.models import AvailabilityBlock
-from app.team.requests import unavailable_hits
+from app.team.requests.availability import unavailable_hits
 from tests.team.conftest import (
     AddMember,
     Connected,

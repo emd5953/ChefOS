@@ -7,8 +7,8 @@ from datetime import UTC, date, datetime, timedelta
 import httpx
 import pytest
 
+from app.business_date import business_date
 from app.cli import DEMO_PASSWORD
-from app.integrations.providers.square.business_date import business_date
 from app.main import app
 from app.team import demo
 from tests.team.conftest import Connected
