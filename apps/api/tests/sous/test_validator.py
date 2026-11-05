@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.sous.validator import ungrounded_numbers
+from app.sous.agent.validator import ungrounded_numbers
 
 SALES = {
     "net_sales_usd": 52914.37,

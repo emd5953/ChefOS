@@ -704,11 +704,11 @@ async def demo(args: argparse.Namespace) -> int:
 
     from sqlalchemy import select
 
+    from app.business_date import business_date
     from app.db import scoped_session
     from app.identity import service as identity
     from app.integrations import service, sync, temporal
     from app.integrations.models import IntegrationConnection
-    from app.integrations.providers.square.business_date import business_date
 
     if get_settings().square_mode != "fake":
         print("`demo` connects the simulated Square; set SQUARE_MODE=fake.")

@@ -10,10 +10,10 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.business_date import business_date, get_zone
 from app.errors import ProblemError
 from app.identity.models import Location
 from app.integrations.freshness import location_freshness
-from app.integrations.providers.square.business_date import business_date, get_zone
 from app.inventory.food_cost_schemas import (
     FoodCostCoverage,
     FoodCostItem,

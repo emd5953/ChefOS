@@ -16,11 +16,11 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.types import Send
 
+from app.business_date import business_date
 from app.commerce import service
 from app.db import scoped_session
 from app.errors import ProblemError
 from app.identity.models import Location
-from app.integrations.providers.square.business_date import business_date
 from app.security.sessions import (
     STAFF_ROLES,
     AuthContext,
@@ -29,9 +29,10 @@ from app.security.sessions import (
     require_auth,
     require_role,
 )
-from app.sous import conversations, fallback, orchestrator, prompt, proposals
+from app.sous import conversations, proposals
 from app.sous import service as briefings
-from app.sous.llm import LLMProvider, get_provider, sous_unavailable
+from app.sous.agent import fallback, orchestrator, prompt
+from app.sous.agent.llm import LLMProvider, get_provider, sous_unavailable
 from app.sous.models import ScheduleProposal
 from app.sous.schemas import (
     AskIn,

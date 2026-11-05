@@ -12,13 +12,13 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.engine import make_url
 
+from app.business_date import business_date
 from app.cli import DEMO_EMAIL, DEMO_PASSWORD, seed_demo, seed_inventory_demo
 from app.config import get_settings
 from app.db import scoped_session
 from app.identity import service as identity
 from app.integrations import links, pipeline, providers, sync
 from app.integrations.models import IntegrationConnection
-from app.integrations.providers.square.business_date import business_date
 from app.integrations.providers.square.connector import SquareConnector
 from app.integrations.providers.square.fake_client import FakeSquareClient
 from app.integrations.secrets import encrypt_credentials

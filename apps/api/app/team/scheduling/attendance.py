@@ -24,15 +24,15 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.business_date import business_date
 from app.db import activity_org_session
 from app.errors import validation_error
 from app.identity.models import Location
 from app.integrations.freshness import FreshnessItem, location_freshness
 from app.integrations.models import IntegrationLocationLink
-from app.integrations.providers.square.business_date import business_date
 from app.team import notify
 from app.team.models import Position, PublishedShift, StaffMember, Timecard
-from app.team.schedule import label_shift, paid_hours
+from app.team.scheduling.builder import label_shift, paid_hours
 from app.team.schemas import (
     AttendanceCounts,
     AttendanceDay,

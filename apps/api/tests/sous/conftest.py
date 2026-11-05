@@ -11,8 +11,8 @@ import pytest_asyncio
 from app.integrations import sync
 from app.main import app
 from app.sous import api as sous_api
-from app.sous import llm
-from app.sous.llm import LLMProvider
+from app.sous.agent import llm
+from app.sous.agent.llm import LLMProvider
 from tests.integrations.conftest import (  # noqa: F401
     Clock,
     Connect,

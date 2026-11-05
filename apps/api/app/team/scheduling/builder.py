@@ -19,14 +19,14 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import service as audit
+from app.business_date import business_date
 from app.commerce import service as commerce
 from app.errors import ProblemError, not_found, validation_error
 from app.identity.models import Location
 from app.ids import new_id
 from app.integrations.freshness import location_freshness
-from app.integrations.providers.square.business_date import business_date
 from app.integrations.readmodels import refresh_scheduled_hours
-from app.team import forecast, notify
+from app.team import notify
 from app.team.models import (
     EmployeeLocation,
     EmployeePosition,
@@ -37,6 +37,7 @@ from app.team.models import (
     StaffMember,
     Station,
 )
+from app.team.scheduling import forecast
 from app.team.schemas import (
     ConflictOut,
     CopyOut,

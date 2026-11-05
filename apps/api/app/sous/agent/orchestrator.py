@@ -18,14 +18,15 @@ from opentelemetry.context import Context
 from opentelemetry.trace import set_span_in_context
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.business_date import business_date, get_zone
 from app.context import request_id_var
 from app.db import scoped_session
 from app.errors import ProblemError
 from app.identity.models import Location
-from app.integrations.providers.square.business_date import business_date, get_zone
 from app.security.sessions import AuthContext
-from app.sous import claims, fallback, prompt, tools
-from app.sous.llm import LLMProvider, LLMReply, Message, context_fits
+from app.sous.agent import claims, fallback, prompt, tools
+from app.sous.agent.llm import LLMProvider, LLMReply, Message, context_fits
+from app.sous.agent.tools import ToolResult
 from app.sous.schemas import (
     AskIn,
     Evidence,
@@ -39,7 +40,6 @@ from app.sous.schemas import (
     ToolEvent,
     ToolUse,
 )
-from app.sous.tools import ToolResult
 
 MAX_ROUNDS = 4
 MAX_TOOL_CALLS = 6

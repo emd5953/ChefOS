@@ -10,6 +10,7 @@ from decimal import Decimal
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.business_date import business_date
 from app.commerce.schemas import (
     CHANNELS,
     CategoryMixOut,
@@ -28,7 +29,6 @@ from app.commerce.schemas import (
 from app.errors import not_found, validation_error
 from app.identity.models import Location
 from app.integrations.freshness import location_freshness
-from app.integrations.providers.square.business_date import business_date
 
 MAX_RANGE_DAYS = 800
 

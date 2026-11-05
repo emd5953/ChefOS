@@ -9,8 +9,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.errors import ProblemError
-from app.sous import llm, orchestrator, tools
-from app.sous.llm import CircuitBreaker, FakeProvider, LLMReply, OllamaProvider, ToolCall
+from app.sous.agent import llm, orchestrator, tools
+from app.sous.agent.llm import CircuitBreaker, FakeProvider, LLMReply, OllamaProvider, ToolCall
 from app.sous.schemas import AskIn, Heartbeat
 from tests.integrations.conftest import Clock, Connected
 from tests.sous.test_api import UseProvider, body, mock_ollama, post

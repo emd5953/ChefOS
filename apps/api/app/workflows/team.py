@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from temporalio import activity, workflow
 
 with workflow.unsafe.imports_passed_through():
-    from app.team import attendance
+    from app.team.scheduling import attendance
 
 
 class AttendanceInput(BaseModel):

@@ -15,8 +15,8 @@ from app.db import scoped_session
 from app.errors import ProblemError
 from app.identity.models import Location
 from app.security.sessions import AuthContext
-from app.sous import fallback, orchestrator
-from app.sous.llm import (
+from app.sous.agent import fallback, orchestrator
+from app.sous.agent.llm import (
     CircuitBreaker,
     FakeProvider,
     LLMReply,

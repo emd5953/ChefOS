@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.integrations.providers.square.business_date import get_zone
+from app.business_date import get_zone
 from app.integrations.providers.square.client import SquareClient
 from app.integrations.providers.square.normalizer import NORMALIZER_VERSION
 from app.integrations.providers.square.types import (

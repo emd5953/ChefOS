@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-from app.integrations.providers.square.business_date import business_date
+from app.business_date import business_date
 from app.integrations.providers.square.types import (
     CanonicalMenuCategory,
     CanonicalMenuItem,

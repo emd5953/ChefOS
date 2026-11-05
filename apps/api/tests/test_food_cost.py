@@ -262,7 +262,7 @@ async def test_complete_period_golden_variance(acct: dict, owner_engine: AsyncEn
     zone = ZoneInfo(acct["location"]["timezone"])
     close_at = datetime.now(UTC) + timedelta(minutes=1)
     # Use the same location business-date calculation as imports, including pre-4am service.
-    from app.integrations.providers.square.business_date import business_date
+    from app.business_date import business_date
 
     day_start = time.fromisoformat(acct["location"]["business_day_start"])
     measured_to = business_date(close_at, acct["location"]["timezone"], day_start)

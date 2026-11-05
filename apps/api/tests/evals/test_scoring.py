@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
+from app.sous.agent.tools import ToolResult
 from app.sous.schemas import Evidence, SousAnswer, ToolUse
-from app.sous.tools import ToolResult
 from evals.sous.run import (
     CaseResult,
     UnresolvedFieldError,
@@ -180,7 +180,7 @@ def test_checkpoints_preserve_repeats_metadata_and_incomplete_gate(tmp_path: Pat
 
 
 async def test_preflight_checks_model_availability(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.sous import llm
+    from app.sous.agent import llm
     from evals.sous.run import preflight
 
     class MissingModel:
@@ -199,8 +199,8 @@ async def test_provider_errors_are_recorded_as_failed_cases(
     from types import SimpleNamespace
 
     from app.errors import ProblemError
-    from app.sous import orchestrator
-    from app.sous.llm import FakeProvider
+    from app.sous.agent import orchestrator
+    from app.sous.agent.llm import FakeProvider
     from evals.sous.run import Env, run_case
 
     async def unavailable(*args: object, **kwargs: object) -> None:
@@ -221,7 +221,7 @@ async def test_provider_errors_are_recorded_as_failed_cases(
 
 
 async def test_eval_recording_preserves_provider_calls_and_raw_replies() -> None:
-    from app.sous.llm import FakeProvider, LLMReply, ToolCall
+    from app.sous.agent.llm import FakeProvider, LLMReply, ToolCall
     from evals.sous.run import RecordingProvider
 
     reply = LLMReply(tool_calls=[ToolCall("get_sales_summary", {"from": "2026-10-21"})])

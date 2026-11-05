@@ -15,9 +15,9 @@ from sqlalchemy import text
 from app.db import scoped_session
 from app.integrations import readmodels, sync
 from app.integrations.providers.square import fake_data as fd
-from app.team import attendance
-from app.team.attendance import Punch
 from app.team.demo import resolve_refs_any
+from app.team.scheduling import attendance
+from app.team.scheduling.attendance import Punch
 from tests.team.conftest import (
     NY,
     AddMember,
@@ -50,7 +50,7 @@ def test_open_punch_running_hours_use_as_of_and_closed_punches_use_paid_hours() 
 
 @pytest.fixture
 def now(clock: Clock, monkeypatch: pytest.MonkeyPatch) -> Clock:
-    from app.team import schedule
+    from app.team.scheduling import builder as schedule
 
     monkeypatch.setattr(schedule, "_now", clock)
     monkeypatch.setattr(attendance, "_now", clock)

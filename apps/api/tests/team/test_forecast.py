@@ -7,8 +7,8 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.integrations.providers.square import fake_data as fd
-from app.team.forecast import basis_dates, forecast_for, median_cents
-from app.team.schedule import paid_hours, shift_by_weeks, shift_cost
+from app.team.scheduling.builder import paid_hours, shift_by_weeks, shift_cost
+from app.team.scheduling.forecast import basis_dates, forecast_for, median_cents
 
 NY = ZoneInfo("America/New_York")
 FRI = date(2026, 3, 13)

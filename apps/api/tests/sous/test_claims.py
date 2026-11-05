@@ -5,9 +5,9 @@ from datetime import date
 
 import pytest
 
-from app.sous.claims import CONTROLLED, catalog, render
-from app.sous.llm import FakeProvider
-from app.sous.tools import ToolResult
+from app.sous.agent.claims import CONTROLLED, catalog, render
+from app.sous.agent.llm import FakeProvider
+from app.sous.agent.tools import ToolResult
 from tests.integrations.conftest import Clock, Connected
 from tests.sous.test_orchestrator import WEEK, ask, call, say, select_facts, tool_round
 
@@ -186,9 +186,9 @@ def test_maximum_daily_breakdown_fits_model_context() -> None:
     from datetime import UTC, datetime, time, timedelta
 
     from app.identity.models import Location
-    from app.sous.llm import context_fits
-    from app.sous.prompt import build_system_prompt
-    from app.sous.tools import tool_specs
+    from app.sous.agent.llm import context_fits
+    from app.sous.agent.prompt import build_system_prompt
+    from app.sous.agent.tools import tool_specs
 
     first = date(2026, 1, 1)
     result = ToolResult(

@@ -2,8 +2,8 @@
 
 from datetime import date, datetime, timedelta
 
+from app.business_date import business_date, get_zone
 from app.identity.models import Location
-from app.integrations.providers.square.business_date import business_date, get_zone
 
 PROMPT_VERSION = "sous-prompt-13"
 

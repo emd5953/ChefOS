@@ -28,12 +28,16 @@ overrides service addresses (`postgres:5432`, `temporal:7233`, ...) via `environ
 1. Create `app/<module>/` with `models.py`, `schemas.py`, `service.py`, `api.py` (`router = APIRouter(...)`).
 2. Register the router: one `include_router` line in `create_app()` in `app/main.py`.
 3. Register models: one import line in `app/models.py` (Alembic autogenerate and the drift test see `Base`).
-4. Migration: `uv run alembic revision --autogenerate -m "add <module>"`, then edit it by hand to add
+4. Declare `PUBLIC` in `app/<module>/__init__.py`: the submodules other modules may import.
+   `tests/test_boundaries.py` enforces it, keeps platform code (`db`, `config`, `errors`, `business_date`, ...)
+   free of domain imports, bans cross-module imports of `api` routers, and fails on any new
+   module cycle (docs/specs/backend-module-boundaries.md).
+5. Migration: `uv run alembic revision --autogenerate -m "add <module>"`, then edit it by hand to add
    `ENABLE ROW LEVEL SECURITY` and a policy (`USING (org_id = app_org_id()) WITH CHECK (org_id = app_org_id())`)
    for each org-scoped table. Run `make migrate`, and `alembic check` must report no drift.
    `chefos_app` gets DML on new tables automatically (default privileges).
-5. Workflows/activities: add them to `WORKFLOWS` / `ACTIVITIES` in `app/workflows/worker.py`.
+6. Workflows/activities: add them to `WORKFLOWS` / `ACTIVITIES` in `app/workflows/worker.py`.
    Workflow input is a Pydantic model whose first field is `org_id: UUID`.
-6. CLI commands: decorate a function with `@command("name")` in `app/cli.py`.
-7. If the module has unsafe-method routes without a session (webhooks), add them to `PUBLIC_UNSAFE`
+7. CLI commands: decorate a function with `@command("name")` in `app/cli.py`.
+8. If the module has unsafe-method routes without a session (webhooks), add them to `PUBLIC_UNSAFE`
    in `tests/test_auth.py` and verify them another way (e.g. HMAC).

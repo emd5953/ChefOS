@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.db import scoped_session, set_scope
 from app.errors import ProblemError
 from app.sous import conversations
-from app.sous.llm import FakeProvider, LLMReply
+from app.sous.agent.llm import FakeProvider, LLMReply
 from app.sous.models import Conversation, Turn
 from app.sous.schemas import AskIn, SousAnswer
 from tests.integrations.conftest import Connect, Connected
@@ -257,7 +257,7 @@ async def test_http_cancellation_releases_reservation_and_joins_provider(
 async def test_committed_retry_works_with_open_breaker(
     bare: Connected, use_provider: UseProvider
 ) -> None:
-    from app.sous.llm import BREAKER
+    from app.sous.agent.llm import BREAKER
     from tests.sous.test_resilience import DownProvider
 
     fake = FakeProvider([REPLY])

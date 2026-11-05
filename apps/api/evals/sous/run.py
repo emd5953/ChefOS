@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 if TYPE_CHECKING:
-    from app.sous.llm import LLMProvider, LLMReply, Message, ProviderHealth
+    from app.sous.agent.llm import LLMProvider, LLMReply, Message, ProviderHealth
     from app.sous.schemas import SousAnswer
 
 CASES_PATH = Path(__file__).with_name("cases.yaml")
@@ -411,7 +411,7 @@ def expected_fact(result: Any, path: str) -> str:
     Scalar coincidence is not correctness. Row fields map to a bundled row fact, so a
     different item/employee/channel carrying the same number cannot satisfy the check.
     """
-    from app.sous.claims import catalog
+    from app.sous.agent.claims import catalog
 
     parts = path.split(".")
     key = path.removeprefix("comparison.") if path.startswith("comparison.change.") else path
@@ -458,7 +458,7 @@ async def compute_expected(
 
 
 def now_business_date(now: datetime, loc: Any) -> date:
-    from app.integrations.providers.square.business_date import business_date
+    from app.business_date import business_date
 
     return business_date(now, loc.timezone, loc.business_day_start)
 
@@ -505,7 +505,7 @@ def score(case: dict[str, Any], res: CaseResult, answer: SousAnswer) -> None:
 
 async def preflight() -> bool:
     """Use the configured provider's health check, including model availability."""
-    from app.sous.llm import get_provider
+    from app.sous.agent.llm import get_provider
 
     health = await get_provider().health()
     return health.reachable and health.model_pulled
@@ -537,9 +537,9 @@ class RecordingProvider:
 async def run_case(
     case: dict[str, Any], env: Env, provider: LLMProvider, now: datetime
 ) -> CaseResult:
-    from app.sous.orchestrator import ask
+    from app.sous.agent.orchestrator import ask
+    from app.sous.agent.tools import TOOL_NAMES, run_tool
     from app.sous.schemas import AskIn, HistoryTurn
-    from app.sous.tools import TOOL_NAMES, run_tool
 
     expect = case["expect"]
     kinds = [expect["kind"]] if "kind" in expect else list(expect["kind_any"])
@@ -693,7 +693,7 @@ async def run_metadata(now: datetime, fixture: str, planned: int) -> dict[str, A
     import httpx
 
     from app.config import get_settings
-    from app.sous.prompt import PROMPT_VERSION
+    from app.sous.agent.prompt import PROMPT_VERSION
 
     settings = get_settings()
     metadata: dict[str, Any] = {
@@ -768,7 +768,7 @@ async def amain(args: argparse.Namespace) -> int:
     from app.commerce.service import get_location
     from app.identity import service as identity
     from app.security.sessions import AuthContext, revoke_session
-    from app.sous.llm import get_provider
+    from app.sous.agent.llm import get_provider
 
     login = await identity.login(DEMO_EMAIL, DEMO_PASSWORD, user_agent="sous-eval", ip=None)
     ctx = AuthContext(
